@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"strings"
+	//	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -262,39 +262,76 @@ func (r *DockerRuntime) buildEnvironment(function *domain.Function, input []byte
 	return env
 }
 
+// collectLogs retrieves stdout and stderr from the container
 func (r *DockerRuntime) collectLogs(ctx context.Context, containerID string) ([]byte, error) {
 	options := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     false,
-		Timestamps: true,
+		Timestamps: false,
 	}
 
 	reader, err := r.client.ContainerLogs(ctx, containerID, options)
 	if err != nil {
 		return nil, err
 	}
-
 	defer reader.Close()
 
-	var buf bytes.Buffer
-	_, err = io.Copy(&buf, reader)
-	if err != nil {
-		return nil, err
+	// Docker uses a multiplexed stream with 8-byte headers
+	// Format: [stream_type, 0, 0, 0, size_byte1, size_byte2, size_byte3, size_byte4, ...data...]
+	var output bytes.Buffer
+	header := make([]byte, 8)
+
+	for {
+		// Read the 8-byte header
+		n, err := io.ReadFull(reader, header)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			if n == 0 {
+				break
+			}
+			// Partial read or other error - just break
+			break
+		}
+
+		// Extract the payload size from bytes 4-7 (big-endian uint32)
+		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
+
+		// Read the payload
+		payload := make([]byte, size)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			break
+		}
+
+		// Append to output
+		output.Write(payload)
 	}
-	return buf.Bytes(), nil
+
+	return output.Bytes(), nil
 }
 
+// extractOutput extracts just the last line (the function result)
 func (r *DockerRuntime) extractOutput(logs []byte) []byte {
-	lines := strings.Split(string(logs), "\n")
+	if len(logs) == 0 {
+		return []byte("{}")
+	}
+
+	// Split by newlines and get the last non-empty line
+	lines := bytes.Split(logs, []byte("\n"))
+
+	// Find last non-empty line
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			return []byte(line)
+		line := bytes.TrimSpace(lines[i])
+		if len(line) > 0 {
+			return line
 		}
 	}
 
-	return []byte{}
+	// If no output, return the full logs
+	return logs
 }
 
 func (r *DockerRuntime) getMemoryUsage(ctx context.Context, containerID string) (int64, error) {
