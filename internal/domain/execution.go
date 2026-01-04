@@ -1,8 +1,9 @@
 package domain
 
 import (
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/jagjeet-singh-23/mini-lambda/pkg/utils"
 )
 
 // ExecutionStatus represents the state of the function execution
@@ -83,14 +84,10 @@ func (e *Execution) IsComplete() bool {
 // NewExecution creates a new execution instance
 func NewExecution(functionID string, input []byte) *Execution {
 	return &Execution{
-		ID:         generateID(), // TODO
+		ID:         utils.GenerateID(), // TODO
 		FunctionID: functionID,
 		Status:     StatusPending,
 		Input:      input,
 		StartedAt:  time.Time{},
 	}
-}
-
-func generateID() string {
-	return uuid.New().String()
 }

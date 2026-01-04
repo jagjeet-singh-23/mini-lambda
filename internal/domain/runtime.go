@@ -49,6 +49,9 @@ func DefaultLimits() ResourceLimits {
 }
 
 type RuntimeManager interface {
+	// Execute runs a function and returns the result
+	Execute(ctx context.Context, function *Function, input []byte) (*ExecutionResult, error)
+
 	// GetRuntime() returns a runtime for teh specified type
 	GetRuntime(runtime string) (Runtime, error)
 
