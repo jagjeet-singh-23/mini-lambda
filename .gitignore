@@ -1,0 +1,27 @@
+# Binaries
+bin/
+mini-lambda-server
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Go specific
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store

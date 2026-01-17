@@ -55,6 +55,7 @@ var (
 	ErrInvalidMemory       = NewDomainError("memory must be positive")
 	ErrTimeoutTooLong      = NewDomainError("timeout cannot exceed 15 minutes")
 	ErrMemoryTooHigh       = NewDomainError("memory cannot exceed 10GB")
+	ErrFunctionNotFound    = NewDomainError("function not found")
 )
 
 type DomainError struct {

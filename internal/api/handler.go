@@ -17,16 +17,18 @@ type Handler struct {
 	// runtimeManager executes functions
 	runtimeManager domain.RuntimeManager
 
-	// functionStore stores the function definitions
-	// TODO
-	functions map[string]*domain.Function
+	// functionService stores the function definitions
+	functionService *domain.FunctionService
 }
 
 // NewHandler creates a new API handler
-func NewHandler(runtimeManager domain.RuntimeManager) *Handler {
+func NewHandler(
+	runtimeManager domain.RuntimeManager,
+	functionService *domain.FunctionService,
+) *Handler {
 	return &Handler{
-		runtimeManager: runtimeManager,
-		functions:      make(map[string]*domain.Function),
+		runtimeManager:  runtimeManager,
+		functionService: functionService,
 	}
 }
 
@@ -71,33 +73,62 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) validateAndNormalizeCreateRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+) (*CreateFunctionRequest, bool) {
 	if r.Method != http.MethodPost {
-		h.respondError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST method allowed")
-		return
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"Only POST method allowed",
+		)
+		return nil, false
 	}
 
 	var req CreateFunctionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.respondError(w, http.StatusBadRequest, "invalid_request", "Failed to parse request body")
-		return
+		h.respondError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"Failed to parse request body",
+		)
+		return nil, false
 	}
 
 	if req.Name == "" {
-		h.respondError(w, http.StatusBadRequest, "invalid_request", "Function name is required")
-		return
+		h.respondError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"Function name is required",
+		)
+		return nil, false
 	}
 
 	if req.Runtime == "" {
-		h.respondError(w, http.StatusBadRequest, "invalid_request", "Runtime is required")
-		return
+		h.respondError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"Runtime is required",
+		)
+		return nil, false
 	}
 
 	if req.Code == "" {
-		h.respondError(w, http.StatusBadRequest, "invalid_request", "Function  code is required")
-		return
+		h.respondError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"Function  code is required",
+		)
+		return nil, false
 	}
 
+	// Set default values
 	if req.Timeout == 0 {
 		req.Timeout = 30
 	}
@@ -108,6 +139,15 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 
 	if req.Handler == "" {
 		req.Handler = "handler"
+	}
+
+	return &req, true
+}
+
+func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.validateAndNormalizeCreateRequest(w, r)
+	if !ok {
+		return
 	}
 
 	function := &domain.Function{
@@ -124,16 +164,50 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := function.Validate(); err != nil {
-		h.respondError(w, http.StatusBadRequest, "validation_failed", err.Error())
+		h.respondError(
+			w,
+			http.StatusBadRequest,
+			"validation_failed",
+			err.Error(),
+		)
 		return
 	}
 
 	if _, err := h.runtimeManager.GetRuntime(function.Runtime); err != nil {
-		h.respondError(w, http.StatusBadRequest, "invalid_runtime", fmt.Sprintf("Runtime %s not supported. Available: %v", function.Runtime, h.runtimeManager.ListRuntimes()))
+		h.respondError(
+			w,
+			http.StatusBadRequest,
+			"invalid_runtime",
+			fmt.Sprintf(
+				"Runtime %s not supported. Available: %v",
+				function.Runtime,
+				h.runtimeManager.ListRuntimes(),
+			),
+		)
 		return
 	}
 
-	h.functions[function.ID] = function
+	if err := h.functionService.CreateFunction(r.Context(), function); err != nil {
+		if err == domain.ErrFunctionExists {
+			h.respondError(
+				w,
+				http.StatusConflict,
+				"function_exists",
+				fmt.Sprintf(
+					"Function with name %s already exists",
+					function.Name,
+				),
+			)
+		} else {
+			h.respondError(
+				w,
+				http.StatusInternalServerError,
+				"failed_to_create_function",
+				err.Error(),
+			)
+		}
+		return
+	}
 
 	resp := CreateFunctionResponse{
 		FunctionID: function.ID,
@@ -149,7 +223,12 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 // Executes a function with the provided payload
 func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		h.respondError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST method")
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"Only POST method",
+		)
 		return
 	}
 
@@ -160,19 +239,43 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if functionID == "" {
-		h.respondError(w, http.StatusMethodNotAllowed, "invalid_request", "Function ID is required")
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"invalid_request",
+			"Function ID is required",
+		)
 		return
 	}
 
-	function, exists := h.functions[functionID]
-	if !exists {
-		h.respondError(w, http.StatusNotFound, "function_not_found", fmt.Sprintf("Function %s not found", functionID))
+	function, err := h.functionService.GetFunction(r.Context(), functionID)
+	if err != nil {
+		if err == domain.ErrCodeNotFound {
+			h.respondError(
+				w,
+				http.StatusNotFound,
+				"function_not_found",
+				fmt.Sprintf("Function %s not found", functionID),
+			)
+		} else {
+			h.respondError(
+				w,
+				http.StatusInternalServerError,
+				"failed_to_get_function",
+				err.Error(),
+			)
+		}
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.respondError(w, http.StatusBadRequest, "invalid_request", "Failed to read request body.")
+		h.respondError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"Failed to read request body.",
+		)
 		return
 	}
 
@@ -236,13 +339,29 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 // ListFunctions handles GET /functions
 func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		h.respondError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only GET method alllowed")
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"Only GET method alllowed",
+		)
 		return
 	}
 
-	functions := make([]CreateFunctionResponse, 0, len(h.functions))
-	for _, fn := range h.functions {
-		functions = append(functions, CreateFunctionResponse{
+	functions, err := h.functionService.ListFunctions(r.Context(), 0, 100)
+	if err != nil {
+		h.respondError(
+			w,
+			http.StatusInternalServerError,
+			"failed_to_list_functions",
+			err.Error(),
+		)
+		return
+	}
+
+	functionList := make([]CreateFunctionResponse, 0, len(functions))
+	for _, fn := range functions {
+		functionList = append(functionList, CreateFunctionResponse{
 			FunctionID: fn.ID,
 			Name:       fn.Name,
 			Runtime:    fn.Runtime,
@@ -251,7 +370,7 @@ func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"functions": functions,
+		"functions": functionList,
 		"count":     len(functions),
 	})
 }
@@ -259,15 +378,34 @@ func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 // GetFunction handles GET /functions/{functionID}
 func (h *Handler) GetFunction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		h.respondError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only GET method alllowed")
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"Only GET method alllowed",
+		)
 		return
 	}
 
 	functionID := r.URL.Path[len("/funtions/"):]
 
-	function, exists := h.functions[functionID]
-	if !exists {
-		h.respondError(w, http.StatusNotFound, "function_not_found", fmt.Sprintf("Function %s not found", functionID))
+	function, err := h.functionService.GetFunction(r.Context(), functionID)
+	if err != nil {
+		if err == domain.ErrFunctionNotFound {
+			h.respondError(
+				w,
+				http.StatusNotFound,
+				"function_not_found",
+				fmt.Sprintf("Function %s not found", functionID),
+			)
+		} else {
+			h.respondError(
+				w,
+				http.StatusInternalServerError,
+				"failed_to_get_function",
+				fmt.Sprintf("Failed to retrieve function: %v", err),
+			)
+		}
 		return
 	}
 
@@ -293,14 +431,22 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) respondError(w http.ResponseWriter, status int, errorType, message string) {
+func (h *Handler) respondError(
+	w http.ResponseWriter,
+	status int,
+	errorType, message string,
+) {
 	h.respondJSON(w, status, ErrorResponse{
 		Error:   errorType,
 		Message: message,
 	})
 }
 
-func (h *Handler) respondJSON(w http.ResponseWriter, status int, data interface{}) {
+func (h *Handler) respondJSON(
+	w http.ResponseWriter,
+	status int,
+	data interface{},
+) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)

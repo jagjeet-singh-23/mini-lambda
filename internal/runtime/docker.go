@@ -33,7 +33,10 @@ func NewDockerRuntime(runtimeType, baseImage string) (*DockerRuntime, error) {
 		return nil, fmt.Errorf("base image cannot be empty")
 	}
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
@@ -93,7 +96,11 @@ func (r *DockerRuntime) Execute(
 		return nil, fmt.Errorf("failed to start container: %w", err)
 	}
 
-	statusCh, errCh := r.client.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	statusCh, errCh := r.client.ContainerWait(
+		ctx,
+		containerID,
+		container.WaitConditionNotRunning,
+	)
 	var exitCode int64
 
 	select {
@@ -161,7 +168,9 @@ func (r *DockerRuntime) buildContainerConfig(
 	}
 }
 
-func (r *DockerRuntime) buildHostConfig(function *domain.Function) *container.HostConfig {
+func (r *DockerRuntime) buildHostConfig(
+	function *domain.Function,
+) *container.HostConfig {
 	memoryLimit := function.Memory * 1024 * 1024
 	pidsLimit := int64(256)
 
@@ -240,7 +249,10 @@ if (typeof handler === 'function') {
 	}
 }
 
-func (r *DockerRuntime) buildEnvironment(function *domain.Function, input []byte) []string {
+func (r *DockerRuntime) buildEnvironment(
+	function *domain.Function,
+	input []byte,
+) []string {
 	env := []string{
 		// AWS Lambda-compatible environment variables
 		fmt.Sprintf("AWS_LAMBDA_FUNCTION_NAME=%s", function.Name),
@@ -249,7 +261,10 @@ func (r *DockerRuntime) buildEnvironment(function *domain.Function, input []byte
 		"AWS_REGION=us-east-1", // Default region
 
 		// Pass input as base64-encoded JSON
-		fmt.Sprintf("LAMBDA_INPUT=%s", base64.StdEncoding.EncodeToString(input)),
+		fmt.Sprintf(
+			"LAMBDA_INPUT=%s",
+			base64.StdEncoding.EncodeToString(input),
+		),
 
 		// Set timezone
 		"TZ=UTC",
@@ -263,7 +278,10 @@ func (r *DockerRuntime) buildEnvironment(function *domain.Function, input []byte
 }
 
 // collectLogs retrieves stdout and stderr from the container
-func (r *DockerRuntime) collectLogs(ctx context.Context, containerID string) ([]byte, error) {
+func (r *DockerRuntime) collectLogs(
+	ctx context.Context,
+	containerID string,
+) ([]byte, error) {
 	options := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -297,7 +315,15 @@ func (r *DockerRuntime) collectLogs(ctx context.Context, containerID string) ([]
 		}
 
 		// Extract the payload size from bytes 4-7 (big-endian uint32)
-		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
+		size := uint32(
+			header[4],
+		)<<24 | uint32(
+			header[5],
+		)<<16 | uint32(
+			header[6],
+		)<<8 | uint32(
+			header[7],
+		)
 
 		// Read the payload
 		payload := make([]byte, size)
@@ -334,7 +360,10 @@ func (r *DockerRuntime) extractOutput(logs []byte) []byte {
 	return logs
 }
 
-func (r *DockerRuntime) getMemoryUsage(ctx context.Context, containerID string) (int64, error) {
+func (r *DockerRuntime) getMemoryUsage(
+	ctx context.Context,
+	containerID string,
+) (int64, error) {
 	stats, err := r.client.ContainerStats(ctx, containerID, false)
 	if err != nil {
 		return 0, err
@@ -346,7 +375,10 @@ func (r *DockerRuntime) getMemoryUsage(ctx context.Context, containerID string) 
 	return 0, nil
 }
 
-func (r *DockerRuntime) cleanupContainer(ctx context.Context, containerID string) {
+func (r *DockerRuntime) cleanupContainer(
+	ctx context.Context,
+	containerID string,
+) {
 	// Stop the container
 	timeout := 5
 	_ = r.client.ContainerStop(ctx, containerID, container.StopOptions{

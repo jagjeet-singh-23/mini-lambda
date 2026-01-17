@@ -44,7 +44,11 @@ func (m *Manager) registerDefaultRuntimes() error {
 	for _, config := range runtimeConfigs {
 		runtime, err := NewDockerRuntime(config.runtimeType, config.baseImage)
 		if err != nil {
-			return fmt.Errorf("failed to create %s runtime: %w", config.runtimeType, err)
+			return fmt.Errorf(
+				"failed to create %s runtime: %w",
+				config.runtimeType,
+				err,
+			)
 		}
 
 		if err := m.RegisterRuntime(config.runtimeType, runtime); err != nil {
@@ -55,7 +59,10 @@ func (m *Manager) registerDefaultRuntimes() error {
 	return nil
 }
 
-func (m *Manager) RegisterRuntime(runtimeType string, runtime domain.Runtime) error {
+func (m *Manager) RegisterRuntime(
+	runtimeType string,
+	runtime domain.Runtime,
+) error {
 	if runtimeType == "" {
 		return fmt.Errorf("runtime type cannot be empty")
 	}
@@ -81,7 +88,11 @@ func (m *Manager) GetRuntime(runtimeType string) (domain.Runtime, error) {
 
 	runtime, exists := m.runtimes[runtimeType]
 	if !exists {
-		return nil, fmt.Errorf("runtime %s not found. Available runtimes: %v", runtimeType, m.listRuntimesUnsafe())
+		return nil, fmt.Errorf(
+			"runtime %s not found. Available runtimes: %v",
+			runtimeType,
+			m.listRuntimesUnsafe(),
+		)
 	}
 
 	return runtime, nil
@@ -110,7 +121,10 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 	for runtimeType, runtime := range m.runtimes {
 		if err := runtime.Cleanup(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to cleanup %s:%w", runtimeType, err))
+			errors = append(
+				errors,
+				fmt.Errorf("failed to cleanup %s:%w", runtimeType, err),
+			)
 		}
 	}
 
@@ -123,7 +137,11 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) Execute(ctx context.Context, function *domain.Function, input []byte) (*domain.ExecutionResult, error) {
+func (m *Manager) Execute(
+	ctx context.Context,
+	function *domain.Function,
+	input []byte,
+) (*domain.ExecutionResult, error) {
 	runtime, err := m.GetRuntime(function.Runtime)
 	if err != nil {
 		return nil, err
