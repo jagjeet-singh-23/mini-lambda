@@ -9,7 +9,11 @@ type Runtime interface {
 	// ctx allows for timeout and cancellation
 	// function contains the code and configuration
 	// input is the payload to pass to the function
-	Execute(ctx context.Context, function *Function, input []byte) (*ExecutionResult, error)
+	Execute(
+		ctx context.Context,
+		function *Function,
+		input []byte,
+	) (*ExecutionResult, error)
 
 	// Cleanup releases resources associated with the Runtime
 	Cleanup() error
@@ -50,7 +54,11 @@ func DefaultLimits() ResourceLimits {
 
 type RuntimeManager interface {
 	// Execute runs a function and returns the result
-	Execute(ctx context.Context, function *Function, input []byte) (*ExecutionResult, error)
+	Execute(
+		ctx context.Context,
+		function *Function,
+		input []byte,
+	) (*ExecutionResult, error)
 
 	// GetRuntime() returns a runtime for teh specified type
 	GetRuntime(runtime string) (Runtime, error)
