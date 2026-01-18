@@ -422,6 +422,37 @@ func (h *Handler) GetFunction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) PoolStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"Only GET method allowed",
+		)
+		return
+	}
+
+	stats := make(map[string]interface{})
+	runtimes := h.runtimeManager.ListRuntimes()
+
+	for _, runtimeType := range runtimes {
+		_, err := h.runtimeManager.GetRuntime(runtimeType)
+		if err != nil {
+			continue
+		}
+
+		stats[runtimeType] = map[string]interface{}{
+			"available": true,
+		}
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"pools":     stats,
+		"timestamp": time.Now(),
+	})
+}
+
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status":   "healthy",
