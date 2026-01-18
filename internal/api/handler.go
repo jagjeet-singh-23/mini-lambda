@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jagjeet-singh-23/mini-lambda/internal/domain"
@@ -592,11 +593,17 @@ func (h *Handler) GetExecutionStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	instanceID := os.Getenv("INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = "local"
+	}
+
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"status":   "healthy",
-		"service":  "mini-lambda",
-		"version":  "1.0.0",
-		"runtimes": h.runtimeManager.ListRuntimes(),
+		"status":      "healthy",
+		"service":     "mini-lambda",
+		"version":     "1.0.0",
+		"instance_id": instanceID,
+		"runtimes":    h.runtimeManager.ListRuntimes(),
 	})
 }
 

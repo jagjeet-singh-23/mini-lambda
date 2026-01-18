@@ -3,7 +3,7 @@
 .PHONY: help migrate-up migrate-down migrate-create migrate-force db-reset fmt
 
 # Database URL
-DATABASE_URL := postgres://minilambda:dev_password@localhost:5432/minilambda_dev?sslmode=disable
+DATABASE_URL := postgres://postgres:postgres@localhost:5432/mini_lambda?sslmode=disable
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
