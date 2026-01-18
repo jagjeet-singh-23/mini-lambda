@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -291,6 +292,14 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	execution := domain.NewExecution(function.ID, body)
 	execution.MarkStarted()
 
+	// Log execution start
+	log.Printf(
+		"[EXECUTION_START] function_id=%s execution_id=%s runtime=%s",
+		function.ID,
+		execution.ID,
+		function.Runtime,
+	)
+
 	// Execute function
 	startTime := time.Now()
 	result, err := h.runtimeManager.Execute(ctx, function, body)
@@ -301,6 +310,9 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Execution failed
 		execution.MarkFailed(err)
+		execution.MemoryUsed = 0
+		h.functionService.SaveExecution(r.Context(), execution)
+
 		resp = InvokeFunctionResponse{
 			ExecutionID: execution.ID,
 			Status:      string(domain.StatusFailed),
@@ -313,6 +325,9 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 
 	if ctx.Err() == context.DeadlineExceeded {
 		execution.MarkTimeout()
+		execution.MemoryUsed = result.MemoryUsed
+		h.functionService.SaveExecution(r.Context(), execution)
+
 		resp = InvokeFunctionResponse{
 			ExecutionID: execution.ID,
 			Status:      string(domain.StatusTimeout),
@@ -324,6 +339,19 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	execution.MarkSuccess(resp.Output)
+	execution.MemoryUsed = result.MemoryUsed
+	execution.IsWarmStart = result.WasWarmStart
+	h.functionService.SaveExecution(r.Context(), execution)
+
+	// Log execution success
+	log.Printf(
+		"[EXECUTION_SUCCESS] function_id=%s execution_id=%s duration_ms=%d warm_start=%t",
+		function.ID,
+		execution.ID,
+		duration.Milliseconds(),
+		result.WasWarmStart,
+	)
+
 	resp = InvokeFunctionResponse{
 		ExecutionID: execution.ID,
 		Status:      string(domain.StatusSuccess),
@@ -450,6 +478,116 @@ func (h *Handler) PoolStats(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"pools":     stats,
 		"timestamp": time.Now(),
+	})
+}
+
+// GetExecutionHistory handles GET /functions/{id}/executions
+func (h *Handler) GetExecutionHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"Only GET method allowed",
+		)
+		return
+	}
+
+	// Extract function ID from path
+	functionID := r.URL.Path[len("/functions/"):]
+	if idx := len(functionID) - len("/executions"); idx > 0 {
+		functionID = functionID[:idx]
+	}
+
+	executions, err := h.functionService.GetExecutionHistory(
+		r.Context(),
+		functionID,
+		50,
+		0,
+	)
+	if err != nil {
+		h.respondError(
+			w,
+			http.StatusInternalServerError,
+			"failed_to_get_history",
+			err.Error(),
+		)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"executions": executions,
+		"count":      len(executions),
+	})
+}
+
+// GetExecutionStats handles GET /stats/executions
+func (h *Handler) GetExecutionStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.respondError(
+			w,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"Only GET method allowed",
+		)
+		return
+	}
+
+	executions, err := h.functionService.GetRecentExecutions(r.Context(), 100)
+	if err != nil {
+		h.respondError(
+			w,
+			http.StatusInternalServerError,
+			"failed_to_get_executions",
+			err.Error(),
+		)
+		return
+	}
+
+	// Calculate stats
+	var totalDuration int64
+	var warmStarts, coldStarts int
+	var successCount, failureCount int
+
+	for _, exec := range executions {
+		totalDuration += exec.Duration.Milliseconds()
+		if exec.IsWarmStart {
+			warmStarts++
+		} else {
+			coldStarts++
+		}
+		if exec.Status == domain.StatusSuccess {
+			successCount++
+		} else {
+			failureCount++
+		}
+	}
+
+	var avgDuration float64
+	if len(executions) > 0 {
+		avgDuration = float64(totalDuration) / float64(len(executions))
+	}
+
+	var warmStartRate float64
+	if len(executions) > 0 {
+		warmStartRate = float64(warmStarts) / float64(len(executions)) * 100
+	}
+
+	var successRate float64
+	if len(executions) > 0 {
+		successRate = float64(successCount) / float64(len(executions)) * 100
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"total_executions": len(executions),
+		"warm_starts":      warmStarts,
+		"cold_starts":      coldStarts,
+		"warm_start_rate":  warmStartRate,
+		"success_count":    successCount,
+		"failure_count":    failureCount,
+		"success_rate":     successRate,
+		"avg_duration_ms":  avgDuration,
+		"timestamp":        time.Now(),
 	})
 }
 

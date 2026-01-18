@@ -380,3 +380,267 @@ func (r *PostgresRepository) Close() error {
 func (r *PostgresRepository) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return r.db.BeginTx(ctx, nil)
 }
+
+// SaveExecution saves an execution record to the database
+func (r *PostgresRepository) SaveExecution(
+	ctx context.Context,
+	execution *domain.Execution,
+) error {
+	query := `
+	INSERT INTO executions (
+		id, function_id, status, is_warm_start,
+		duration_ms, memory_used_bytes, error_message,
+		created_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+
+	var errorMsg sql.NullString
+	if execution.Error != "" {
+		errorMsg = sql.NullString{String: execution.Error, Valid: true}
+	}
+
+	_, err := r.db.ExecContext(ctx, query,
+		execution.ID,
+		execution.FunctionID,
+		string(execution.Status),
+		execution.IsWarmStart,
+		execution.Duration.Milliseconds(),
+		execution.MemoryUsed,
+		errorMsg,
+		execution.StartedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save execution: %w", err)
+	}
+
+	return nil
+}
+
+// GetExecutionHistory retrieves execution history for a function
+func (r *PostgresRepository) GetExecutionHistory(
+	ctx context.Context,
+	functionID string,
+	limit, offset int,
+) ([]*domain.Execution, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `
+	SELECT id, function_id, status, is_warm_start,
+	       duration_ms, memory_used_bytes, error_message,
+	       created_at
+	FROM executions
+	WHERE function_id = $1
+	ORDER BY created_at DESC
+	LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, functionID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query executions: %w", err)
+	}
+	defer rows.Close()
+
+	var executions []*domain.Execution
+
+	for rows.Next() {
+		var exec domain.Execution
+		var durationMs int64
+		var errorMsg sql.NullString
+		var status string
+
+		err := rows.Scan(
+			&exec.ID,
+			&exec.FunctionID,
+			&status,
+			&exec.IsWarmStart,
+			&durationMs,
+			&exec.MemoryUsed,
+			&errorMsg,
+			&exec.StartedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan execution: %w", err)
+		}
+
+		exec.Status = domain.ExecutionStatus(status)
+		exec.Duration = time.Duration(durationMs) * time.Millisecond
+		if errorMsg.Valid {
+			exec.Error = errorMsg.String
+		}
+
+		executions = append(executions, &exec)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating executions: %w", err)
+	}
+
+	return executions, nil
+}
+
+// GetRecentExecutions retrieves recent executions across all functions
+func (r *PostgresRepository) GetRecentExecutions(
+	ctx context.Context,
+	limit int,
+) ([]*domain.Execution, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+	SELECT id, function_id, status, is_warm_start,
+	       duration_ms, memory_used_bytes, error_message,
+	       created_at
+	FROM executions
+	ORDER BY created_at DESC
+	LIMIT $1
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query executions: %w", err)
+	}
+	defer rows.Close()
+
+	var executions []*domain.Execution
+
+	for rows.Next() {
+		var exec domain.Execution
+		var durationMs int64
+		var errorMsg sql.NullString
+		var status string
+
+		err := rows.Scan(
+			&exec.ID,
+			&exec.FunctionID,
+			&status,
+			&exec.IsWarmStart,
+			&durationMs,
+			&exec.MemoryUsed,
+			&errorMsg,
+			&exec.StartedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan execution: %w", err)
+		}
+
+		exec.Status = domain.ExecutionStatus(status)
+		exec.Duration = time.Duration(durationMs) * time.Millisecond
+		if errorMsg.Valid {
+			exec.Error = errorMsg.String
+		}
+
+		executions = append(executions, &exec)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating executions: %w", err)
+	}
+
+	return executions, nil
+}
+
+// ExecutionStats holds aggregated execution statistics
+type ExecutionStats struct {
+	TotalExecutions int64
+	SuccessCount    int64
+	FailureCount    int64
+	TimeoutCount    int64
+	WarmStartCount  int64
+	ColdStartCount  int64
+	AvgDurationMs   float64
+	SuccessRate     float64
+	WarmStartRate   float64
+}
+
+// GetExecutionStats retrieves aggregated statistics for a function
+func (r *PostgresRepository) GetExecutionStats(
+	ctx context.Context,
+	functionID string,
+	since time.Time,
+) (*ExecutionStats, error) {
+	query := `
+	SELECT
+		COUNT(*) as total,
+		COUNT(*) FILTER (WHERE status = 'success') as success_count,
+		COUNT(*) FILTER (WHERE status = 'failed') as failure_count,
+		COUNT(*) FILTER (WHERE status = 'timeout') as timeout_count,
+		COUNT(*) FILTER (WHERE is_warm_start = true) as warm_start_count,
+		COUNT(*) FILTER (WHERE is_warm_start = false) as cold_start_count,
+		AVG(duration_ms) as avg_duration_ms
+	FROM executions
+	WHERE function_id = $1 AND created_at >= $2
+	`
+
+	var stats ExecutionStats
+	err := r.db.QueryRowContext(ctx, query, functionID, since).Scan(
+		&stats.TotalExecutions,
+		&stats.SuccessCount,
+		&stats.FailureCount,
+		&stats.TimeoutCount,
+		&stats.WarmStartCount,
+		&stats.ColdStartCount,
+		&stats.AvgDurationMs,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get execution stats: %w", err)
+	}
+
+	// Calculate rates
+	if stats.TotalExecutions > 0 {
+		stats.SuccessRate = float64(stats.SuccessCount) /
+			float64(stats.TotalExecutions) * 100
+		stats.WarmStartRate = float64(stats.WarmStartCount) /
+			float64(stats.TotalExecutions) * 100
+	}
+
+	return &stats, nil
+}
+
+// GetGlobalExecutionStats retrieves aggregated statistics across all functions
+func (r *PostgresRepository) GetGlobalExecutionStats(
+	ctx context.Context,
+	since time.Time,
+) (*ExecutionStats, error) {
+	query := `
+	SELECT
+		COUNT(*) as total,
+		COUNT(*) FILTER (WHERE status = 'success') as success_count,
+		COUNT(*) FILTER (WHERE status = 'failed') as failure_count,
+		COUNT(*) FILTER (WHERE status = 'timeout') as timeout_count,
+		COUNT(*) FILTER (WHERE is_warm_start = true) as warm_start_count,
+		COUNT(*) FILTER (WHERE is_warm_start = false) as cold_start_count,
+		AVG(duration_ms) as avg_duration_ms
+	FROM executions
+	WHERE created_at >= $1
+	`
+
+	var stats ExecutionStats
+	err := r.db.QueryRowContext(ctx, query, since).Scan(
+		&stats.TotalExecutions,
+		&stats.SuccessCount,
+		&stats.FailureCount,
+		&stats.TimeoutCount,
+		&stats.WarmStartCount,
+		&stats.ColdStartCount,
+		&stats.AvgDurationMs,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get global execution stats: %w", err)
+	}
+
+	// Calculate rates
+	if stats.TotalExecutions > 0 {
+		stats.SuccessRate = float64(stats.SuccessCount) /
+			float64(stats.TotalExecutions) * 100
+		stats.WarmStartRate = float64(stats.WarmStartCount) /
+			float64(stats.TotalExecutions) * 100
+	}
+
+	return &stats, nil
+}

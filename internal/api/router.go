@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jagjeet-singh-23/mini-lambda/internal/runtime"
 )
 
 type Router struct {
@@ -25,9 +27,14 @@ func NewRouter(handler *Handler) *Router {
 
 func (r *Router) setupRoutes() {
 	r.mux.HandleFunc("/health", r.logRequest(r.handler.HealthCheck))
-	r.mux.HandleFunc("stats/pools", r.logRequest(r.handler.PoolStats))
+	r.mux.HandleFunc("/stats/pools", r.logRequest(r.handler.PoolStats))
+	r.mux.HandleFunc("/stats/executions", r.logRequest(r.handler.GetExecutionStats))
 	r.mux.HandleFunc("/functions", r.logRequest(r.routeFunctions))
 	r.mux.HandleFunc("/functions/", r.logRequest(r.routeFunctionsByID))
+
+	// Metrics endpoint (Prometheus format)
+	metricsCollector := r.handler.runtimeManager.(*runtime.Manager).GetMetricsCollector()
+	r.mux.Handle("/metrics", metricsCollector.Handler())
 }
 
 func (r *Router) routeFunctions(w http.ResponseWriter, req *http.Request) {
@@ -63,6 +70,16 @@ func (r *Router) routeFunctionsByID(w http.ResponseWriter, req *http.Request) {
 		}
 
 		r.handler.InvokeFunction(w, req)
+		return
+	}
+
+	if len(segments) == 2 && segments[1] == "executions" {
+		if req.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		r.handler.GetExecutionHistory(w, req)
 		return
 	}
 

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/jagjeet-singh-23/mini-lambda/internal/domain"
+	"github.com/jagjeet-singh-23/mini-lambda/internal/metrics"
 )
 
 // Manager implements the runtimeManager interface
@@ -15,11 +16,15 @@ type Manager struct {
 
 	//mu protects concurrent access to the runtimes map
 	mu sync.RWMutex
+
+	// metricsCollector collects Prometheus metrics
+	metricsCollector *metrics.MetricsCollector
 }
 
 func NewManager() (*Manager, error) {
 	m := &Manager{
-		runtimes: make(map[string]domain.Runtime),
+		runtimes:         make(map[string]domain.Runtime),
+		metricsCollector: metrics.NewMetricsCollector(),
 	}
 
 	if err := m.registerDefaultRuntimes(); err != nil {
@@ -42,7 +47,11 @@ func (m *Manager) registerDefaultRuntimes() error {
 	}
 
 	for _, config := range runtimeConfigs {
-		runtime, err := NewDockerRuntime(config.runtimeType, config.baseImage)
+		runtime, err := NewDockerRuntime(
+			config.runtimeType,
+			config.baseImage,
+			m.metricsCollector,
+		)
 		if err != nil {
 			return fmt.Errorf(
 				"failed to create %s runtime: %w",
@@ -148,4 +157,9 @@ func (m *Manager) Execute(
 	}
 
 	return runtime.Execute(ctx, function, input)
+}
+
+// GetMetricsCollector returns the metrics collector
+func (m *Manager) GetMetricsCollector() *metrics.MetricsCollector {
+	return m.metricsCollector
 }
