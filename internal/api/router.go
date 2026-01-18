@@ -25,6 +25,7 @@ func NewRouter(handler *Handler) *Router {
 
 func (r *Router) setupRoutes() {
 	r.mux.HandleFunc("/health", r.logRequest(r.handler.HealthCheck))
+	r.mux.HandleFunc("stats/pools", r.logRequest(r.handler.PoolStats))
 	r.mux.HandleFunc("/functions", r.logRequest(r.routeFunctions))
 	r.mux.HandleFunc("/functions/", r.logRequest(r.routeFunctionsByID))
 }
