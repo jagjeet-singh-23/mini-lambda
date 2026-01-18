@@ -16,6 +16,8 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/internal/storage"
 )
 
+const warmupContainers = 5
+
 func main() {
 	log.Println("Mini Lambda starting...")
 
@@ -29,6 +31,8 @@ func main() {
 	functionService := domain.NewFunctionService(postgresRepo, codeStorage)
 
 	runtimeManager := initRuntimeManager()
+	warmUpPools(ctx, runtimeManager)
+
 	server := setupServer(cfg, runtimeManager, functionService)
 
 	handleGracefulShutdown(server, runtimeManager)
@@ -81,6 +85,16 @@ func initRuntimeManager() *runtime.Manager {
 	}
 	log.Printf("Runtime Manager initialized with runtimes: %v", manager.ListRuntimes())
 	return manager
+}
+
+func warmUpPools(ctx context.Context, manager *runtime.Manager) {
+	runtimes := []string{"python3.9", "nodejs18"}
+	for _, rt := range runtimes {
+		rtObj, _ := manager.GetRuntime(rt)
+		for range warmupContainers {
+			rtObj.(*runtime.DockerRuntime).Pool.CreateNew(ctx)
+		}
+	}
 }
 
 func setupServer(cfg *config.Config, rm *runtime.Manager, fs *domain.FunctionService) *api.Server {
