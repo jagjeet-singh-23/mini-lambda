@@ -19,7 +19,12 @@ import (
 const warmupContainers = 5
 
 func main() {
-	log.Println("Mini Lambda starting...")
+	instanceID := os.Getenv("INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = "local"
+	}
+
+	log.Printf("Mini Lambda starting... (Instance: %s)", instanceID)
 
 	cfg := loadConfig()
 	ctx := context.Background()

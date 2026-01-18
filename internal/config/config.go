@@ -57,8 +57,8 @@ func LoadFromEnv() (*Config, error) {
 			Region:          getEnvString("AWS_REGION", "us-east-1"),
 			Bucket:          getEnvString("S3_BUCKET", "mini-lambda-functions"),
 			Endpoint:        getEnvString("S3_ENDPOINT", ""),
-			AccessKeyID:     getEnvString("AWS_ACCESS_KEY_ID", ""),
-			SecretAccessKey: getEnvString("AWS_SECRET_ACCESS_KEY", ""),
+			AccessKeyID:     getEnvString("S3_ACCESS_KEY", getEnvString("AWS_ACCESS_KEY_ID", "")),
+			SecretAccessKey: getEnvString("S3_SECRET_KEY", getEnvString("AWS_SECRET_ACCESS_KEY", "")),
 			Prefix:          getEnvString("S3_PREFIX", "functions"),
 		},
 	}
