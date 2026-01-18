@@ -24,8 +24,7 @@ type DockerRuntime struct {
 	runtimeType string
 	baseImage   string
 	client      *client.Client
-	pool        pool.ContainerPool
-	usePooling  bool
+	Pool        pool.ContainerPool
 }
 
 type logResult struct {
@@ -53,8 +52,7 @@ func NewDockerRuntime(runtimeType, baseImage string) (*DockerRuntime, error) {
 		runtimeType: runtimeType,
 		baseImage:   baseImage,
 		client:      cli,
-		pool:        containerPool,
-		usePooling:  true,
+		Pool:        containerPool,
 	}, nil
 }
 
@@ -100,11 +98,7 @@ func (r *DockerRuntime) Execute(
 		return nil, fmt.Errorf("failed to ensure image: %w", err)
 	}
 
-	if r.usePooling {
-		return r.executeWithPool(ctx, function, input)
-	} else {
-		return r.executeWithoutPool(ctx, function, input)
-	}
+	return r.executeWithPool(ctx, function, input)
 }
 
 func (r *DockerRuntime) executeWithPool(
@@ -131,7 +125,7 @@ func (r *DockerRuntime) executeWithPool(
 
 func (r *DockerRuntime) acquireContainer(ctx context.Context, m *ExecutionMetrics) (*pool.Container, error) {
 	poolTimer := NewTimer()
-	c, err := r.pool.Acquire(ctx)
+	c, err := r.Pool.Acquire(ctx)
 	m.PoolAcquireTime = poolTimer.Elapsed()
 
 	if c != nil && err == nil {
@@ -141,107 +135,22 @@ func (r *DockerRuntime) acquireContainer(ctx context.Context, m *ExecutionMetric
 		return c, nil
 	}
 
-	nc, err := r.pool.CreateNew(ctx)
+	nc, err := r.Pool.CreateNew(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new container: %w", err)
 	}
 	m.WasWarmStart = false
 	m.ContainerID = nc.ID
-	fmt.Printf("❄️  COLD: Container %s (pool size: %d)\n", nc.ID[:12], r.pool.Size())
+	fmt.Printf("❄️  COLD: Container %s (pool size: %d)\n", nc.ID[:12], r.Pool.Size())
 	return nc, nil
 }
 
 func (r *DockerRuntime) releaseContainer(ctx context.Context, c *pool.Container, m *ExecutionMetrics) {
 	releaseTimer := NewTimer()
-	if err := r.pool.Release(ctx, c); err != nil {
+	if err := r.Pool.Release(ctx, c); err != nil {
 		fmt.Printf("Failed to release container %s: %v\n", c.ID, err)
 	}
 	m.PoolReleaseTime = releaseTimer.Elapsed()
-}
-
-func (r *DockerRuntime) executeWithoutPool(
-	ctx context.Context,
-	function *domain.Function,
-	input []byte,
-) (*domain.ExecutionResult, error) {
-	containerID, err := r.createAndStartContainer(ctx, function, input)
-	if err != nil {
-		return nil, err
-	}
-	defer r.cleanupContainer(context.Background(), containerID)
-
-	exitCode, err := r.waitForContainer(ctx, containerID)
-	if err != nil {
-		return nil, err
-	}
-
-	return r.collectContainerResult(containerID, function, exitCode)
-}
-
-func (r *DockerRuntime) createAndStartContainer(
-	ctx context.Context,
-	f *domain.Function,
-	input []byte,
-) (string, error) {
-	resp, err := r.client.ContainerCreate(
-		ctx,
-		r.buildContainerConfig(f, input),
-		r.buildHostConfig(f),
-		nil,
-		nil,
-		"",
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create container: %w", err)
-	}
-
-	if err := r.client.ContainerStart(
-		ctx,
-		resp.ID,
-		container.StartOptions{},
-	); err != nil {
-		r.cleanupContainer(context.Background(), resp.ID)
-		return "", fmt.Errorf("failed to start container: %w", err)
-	}
-	return resp.ID, nil
-}
-
-func (r *DockerRuntime) waitForContainer(ctx context.Context, id string) (int64, error) {
-	statusCh, errCh := r.client.ContainerWait(ctx, id, container.WaitConditionNotRunning)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return 0, fmt.Errorf("error waiting for container: %w", err)
-		}
-		return 0, nil
-	case status := <-statusCh:
-		return status.StatusCode, nil
-	case <-ctx.Done():
-		return 0, fmt.Errorf("execution timeout: %w", ctx.Err())
-	}
-}
-
-func (r *DockerRuntime) collectContainerResult(
-	id string,
-	f *domain.Function,
-	exitCode int64,
-) (*domain.ExecutionResult, error) {
-	logs, err := r.collectLogs(context.Background(), id)
-	if err != nil {
-		logs = []byte(fmt.Sprintf("Failed to collect logs: %v", err))
-	}
-
-	memoryUsed, err := r.getMemoryUsage(context.Background(), id)
-	if err != nil {
-		memoryUsed = f.Memory * 1024 * 1024
-	}
-
-	return &domain.ExecutionResult{
-		Output:     r.extractOutput(logs),
-		Logs:       logs,
-		MemoryUsed: memoryUsed,
-		ExitCode:   int(exitCode),
-	}, nil
 }
 
 func (r *DockerRuntime) executeInPooledContainer(
@@ -257,7 +166,7 @@ func (r *DockerRuntime) executeInPooledContainer(
 	if err != nil {
 		return nil, err
 	}
-	logCh := r.startAsyncLogRead(ctx, logReader, function.Timeout)
+	logCh := r.startAsyncLogRead(logReader)
 	exitCode, err := r.waitForExec(ctx, execID, function.Timeout, m)
 	if err != nil {
 		return nil, err
@@ -438,115 +347,6 @@ func (r *DockerRuntime) ensureImage(ctx context.Context) error {
 	return err
 }
 
-func (r *DockerRuntime) buildContainerConfig(
-	function *domain.Function,
-	input []byte,
-) *container.Config {
-	return &container.Config{
-		Image:        r.baseImage,
-		Cmd:          r.buildCommand(function),
-		Env:          r.buildEnvironment(function, input),
-		WorkingDir:   "/tmp",
-		AttachStdout: true,
-		AttachStderr: true,
-		Tty:          false,
-	}
-}
-
-func (r *DockerRuntime) buildHostConfig(
-	function *domain.Function,
-) *container.HostConfig {
-	memoryLimit := function.Memory * 1024 * 1024
-	pidsLimit := int64(256)
-
-	return &container.HostConfig{
-		NetworkMode:    "none",
-		AutoRemove:     false,
-		ReadonlyRootfs: true,
-		Resources: container.Resources{
-			Memory:    memoryLimit,
-			CPUShares: 1024,
-			PidsLimit: &pidsLimit,
-		},
-	}
-}
-
-func (r *DockerRuntime) buildCommand(function *domain.Function) []string {
-	encodedCode := base64.StdEncoding.EncodeToString(function.Code)
-
-	switch r.runtimeType {
-	case "python3.9", "python3.11":
-		return []string{"python3", "-c", r.getPythonColdScript(encodedCode)}
-	case "nodejs18", "nodejs20":
-		return []string{"node", "-e", r.getNodeColdScript(encodedCode)}
-	default:
-		return []string{"sh", "-c", string(function.Code)}
-	}
-}
-
-func (r *DockerRuntime) getPythonColdScript(code string) string {
-	return fmt.Sprintf(`
-import base64, sys, json, os
-code = base64.b64decode('%s').decode('utf-8')
-input_b64 = os.environ.get('LAMBDA_INPUT', '')
-event = json.loads(base64.b64decode(input_b64).decode('utf-8')) if input_b64 else {}
-exec(code)
-if 'handler' in dir():
-    print(json.dumps(handler(event, {})))
-`, code)
-}
-
-func (r *DockerRuntime) getNodeColdScript(code string) string {
-	return fmt.Sprintf(`
-const code = Buffer.from('%s', 'base64').toString('utf-8');
-const inputB64 = process.env.LAMBDA_INPUT || '';
-const event = inputB64 ? JSON.parse(Buffer.from(inputB64, 'base64').toString('utf-8')) : {};
-eval(code);
-if (typeof handler === 'function') {
-    handler(event, {}).then(res => console.log(JSON.stringify(res)));
-}
-`, code)
-}
-
-func (r *DockerRuntime) buildEnvironment(
-	function *domain.Function,
-	input []byte,
-) []string {
-	env := []string{
-		// AWS Lambda-compatible environment variables
-		fmt.Sprintf("AWS_LAMBDA_FUNCTION_NAME=%s", function.Name),
-		fmt.Sprintf("AWS_LAMBDA_FUNCTION_MEMORY_SIZE=%d", function.Memory),
-		"AWS_LAMBDA_FUNCTION_VERSION=1",
-		"AWS_REGION=us-east-1", // Default region
-
-		// Pass input as base64-encoded JSON
-		fmt.Sprintf(
-			"LAMBDA_INPUT=%s",
-			base64.StdEncoding.EncodeToString(input),
-		),
-
-		// Set timezone
-		"TZ=UTC",
-	}
-
-	for key, value := range function.Environment {
-		env = append(env, fmt.Sprintf("%s=%s", key, value))
-	}
-
-	return env
-}
-
-func (r *DockerRuntime) collectLogs(ctx context.Context, id string) ([]byte, error) {
-	options := container.LogsOptions{ShowStdout: true, ShowStderr: true}
-	reader, err := r.client.ContainerLogs(ctx, id, options)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
-	return r.parseDockerStream(reader)
-}
-
 func (r *DockerRuntime) parseDockerStream(reader io.Reader) ([]byte, error) {
 	var output bytes.Buffer
 	header := make([]byte, 8)
@@ -591,37 +391,6 @@ func (r *DockerRuntime) extractOutput(logs []byte) []byte {
 	return logs
 }
 
-func (r *DockerRuntime) getMemoryUsage(
-	ctx context.Context,
-	containerID string,
-) (int64, error) {
-	stats, err := r.client.ContainerStats(ctx, containerID, false)
-	if err != nil {
-		return 0, err
-	}
-
-	defer stats.Body.Close()
-
-	// TODO: Parse stats
-	return 0, nil
-}
-
-func (r *DockerRuntime) cleanupContainer(
-	ctx context.Context,
-	containerID string,
-) {
-	// Stop the container
-	timeout := 5
-	_ = r.client.ContainerStop(ctx, containerID, container.StopOptions{
-		Timeout: &timeout,
-	})
-
-	// Remove the container
-	_ = r.client.ContainerRemove(ctx, containerID, container.RemoveOptions{
-		Force: true,
-	})
-}
-
 // Cleanup implements the Runtime interface
 // Called when shutting down the runtime
 func (r *DockerRuntime) Cleanup() error {
@@ -634,18 +403,8 @@ func (r *DockerRuntime) Cleanup() error {
 
 // GetPoolStats returns statistics about the container pool
 func (r *DockerRuntime) GetPoolStats() pool.PoolStats {
-	if r.pool != nil {
-		return r.pool.Stats()
+	if r.Pool != nil {
+		return r.Pool.Stats()
 	}
 	return pool.PoolStats{}
-}
-
-// DisablePooling disables container pooling
-func (r *DockerRuntime) DisablePooling() {
-	r.usePooling = false
-}
-
-// EnablePooling enables container pooling
-func (r *DockerRuntime) EnablePooling() {
-	r.usePooling = true
 }

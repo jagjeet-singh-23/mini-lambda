@@ -1,6 +1,6 @@
 #!/bin/bash
 
-FUNCTION_ID="<function_id>"
+FUNCTION_ID="019bcae4-ede8-7fbd-ba55-1249165853a7"
 CONCURRENT=20
 SERVER_LOG="/tmp/mini-lambda-benchmark.log"
 
@@ -9,10 +9,10 @@ echo "Container Pool Benchmark"
 echo "==================================="
 echo ""
 
-if ! curl -s http://localhost:8080/health > /dev/null 2>&1; then
-    echo "❌ Error: Server is not running on localhost:8080"
-    echo "Please start the server first with: ./main"
-    exit 1
+if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
+  echo "❌ Error: Server is not running on localhost:8080"
+  echo "Please start the server first with: ./main"
+  exit 1
 fi
 
 echo "Running $CONCURRENT concurrent invocations..."
@@ -25,7 +25,7 @@ start=$(date +%s%N)
 for i in $(seq 1 $CONCURRENT); do
   curl -s -X POST http://localhost:8080/functions/$FUNCTION_ID/invoke \
     -H "Content-Type: application/json" \
-    -d "{\"test\": $i}" > /tmp/response_"$i".json &
+    -d "{\"test\": $i}" >/tmp/response_"$i".json &
 done
 
 wait
@@ -55,9 +55,9 @@ for i in $(seq 1 $CONCURRENT); do
 done
 
 if [ $count -gt 0 ]; then
-    avg_duration=$((total_duration / count))
-    echo ""
-    echo "Average execution time: ${avg_duration}ms"
+  avg_duration=$((total_duration / count))
+  echo ""
+  echo "Average execution time: ${avg_duration}ms"
 fi
 
 error_count=0
@@ -68,8 +68,8 @@ for i in $(seq 1 $CONCURRENT); do
 done
 
 if [ $error_count -gt 0 ]; then
-    echo "⚠️  Warning: $error_count requests had errors"
-    echo "Check /tmp/response_*.json for details"
+  echo "⚠️  Warning: $error_count requests had errors"
+  echo "Check /tmp/response_*.json for details"
 else
-    echo "✅ All requests completed successfully"
+  echo "✅ All requests completed successfully"
 fi
