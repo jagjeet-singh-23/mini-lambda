@@ -28,6 +28,17 @@ type FunctionRepository interface {
 	Exists(ctx context.Context, id string) (bool, error)
 }
 
+// ExecutionRepository handles execution history storage
+type ExecutionRepository interface {
+	SaveExecution(ctx context.Context, execution *Execution) error
+	GetExecutionHistory(
+		ctx context.Context,
+		functionID string,
+		limit, offset int,
+	) ([]*Execution, error)
+	GetRecentExecutions(ctx context.Context, limit int) ([]*Execution, error)
+}
+
 type CodeStorage interface {
 	Store(ctx context.Context, functionID string, code []byte) (string, error)
 
@@ -175,4 +186,38 @@ func (s *FunctionService) ListFunctions(
 	offset, limit int,
 ) ([]*Function, error) {
 	return s.repo.List(ctx, offset, limit)
+}
+
+// SaveExecution saves an execution record
+func (s *FunctionService) SaveExecution(
+	ctx context.Context,
+	execution *Execution,
+) error {
+	if execRepo, ok := s.repo.(ExecutionRepository); ok {
+		return execRepo.SaveExecution(ctx, execution)
+	}
+	return nil // Silently skip if repository doesn't support executions
+}
+
+// GetExecutionHistory retrieves execution history for a function
+func (s *FunctionService) GetExecutionHistory(
+	ctx context.Context,
+	functionID string,
+	limit, offset int,
+) ([]*Execution, error) {
+	if execRepo, ok := s.repo.(ExecutionRepository); ok {
+		return execRepo.GetExecutionHistory(ctx, functionID, limit, offset)
+	}
+	return nil, errors.New("execution history not supported")
+}
+
+// GetRecentExecutions retrieves recent executions across all functions
+func (s *FunctionService) GetRecentExecutions(
+	ctx context.Context,
+	limit int,
+) ([]*Execution, error) {
+	if execRepo, ok := s.repo.(ExecutionRepository); ok {
+		return execRepo.GetRecentExecutions(ctx, limit)
+	}
+	return nil, errors.New("execution history not supported")
 }

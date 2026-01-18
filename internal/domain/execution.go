@@ -36,6 +36,9 @@ type Execution struct {
 	// Error contains the error message if execution failed
 	Error string
 
+	// IsWarmStart indicates if this execution used a warm container
+	IsWarmStart bool
+
 	// StartedAt marks when execution started
 	StartedAt time.Time
 

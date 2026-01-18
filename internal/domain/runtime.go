@@ -34,6 +34,9 @@ type ExecutionResult struct {
 
 	// ExitCode is the process exit code (0 = success)
 	ExitCode int
+
+	// WasWarmStart indicates if this execution used a warm container
+	WasWarmStart bool
 }
 
 type ResourceLimits struct {

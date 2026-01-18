@@ -16,15 +16,17 @@ import (
 	"github.com/docker/docker/client"
 
 	"github.com/jagjeet-singh-23/mini-lambda/internal/domain"
+	"github.com/jagjeet-singh-23/mini-lambda/internal/metrics"
 	"github.com/jagjeet-singh-23/mini-lambda/internal/pool"
 )
 
 // DockerRuntime implements the Runtime interface using Docker
 type DockerRuntime struct {
-	runtimeType string
-	baseImage   string
-	client      *client.Client
-	Pool        pool.ContainerPool
+	runtimeType      string
+	baseImage        string
+	client           *client.Client
+	Pool             pool.ContainerPool
+	metricsCollector *metrics.MetricsCollector
 }
 
 type logResult struct {
@@ -33,7 +35,10 @@ type logResult struct {
 }
 
 // NewDockerRuntime creates a new Docker-based runtime
-func NewDockerRuntime(runtimeType, baseImage string) (*DockerRuntime, error) {
+func NewDockerRuntime(
+	runtimeType, baseImage string,
+	metricsCollector *metrics.MetricsCollector,
+) (*DockerRuntime, error) {
 	if runtimeType == "" || baseImage == "" {
 		return nil, fmt.Errorf("runtime type and base image cannot be empty")
 	}
@@ -49,10 +54,11 @@ func NewDockerRuntime(runtimeType, baseImage string) (*DockerRuntime, error) {
 	}
 
 	return &DockerRuntime{
-		runtimeType: runtimeType,
-		baseImage:   baseImage,
-		client:      cli,
-		Pool:        containerPool,
+		runtimeType:      runtimeType,
+		baseImage:        baseImage,
+		client:           cli,
+		Pool:             containerPool,
+		metricsCollector: metricsCollector,
 	}, nil
 }
 
@@ -109,7 +115,7 @@ func (r *DockerRuntime) executeWithPool(
 	metrics := &ExecutionMetrics{}
 	totalTimer := NewTimer()
 
-	container, err := r.acquireContainer(ctx, metrics)
+	container, wasWarmStart, err := r.acquireContainer(ctx, metrics)
 	if err != nil {
 		return nil, err
 	}
@@ -118,12 +124,47 @@ func (r *DockerRuntime) executeWithPool(
 		r.releaseContainer(ctx, container, metrics)
 		metrics.TotalTime = totalTimer.Elapsed()
 		fmt.Println(metrics.String())
+
+		// Record metrics
+		if r.metricsCollector != nil {
+			r.metricsCollector.RecordPoolAcquireTime(
+				r.runtimeType,
+				metrics.PoolAcquireTime,
+			)
+			r.metricsCollector.RecordCodeExecutionTime(
+				r.runtimeType,
+				metrics.CodeExecutionTime,
+			)
+			r.metricsCollector.RecordOutputReadTime(
+				r.runtimeType,
+				metrics.OutputReadTime,
+			)
+			// Record pool stats
+			r.metricsCollector.RecordPoolStats(r.runtimeType, r.Pool.Stats())
+		}
 	}()
 
-	return r.executeInPooledContainer(ctx, container.ID, function, input, metrics)
+	result, err := r.executeInPooledContainer(
+		ctx,
+		container.ID,
+		function,
+		input,
+		metrics,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add warm start indicator to result
+	result.WasWarmStart = wasWarmStart
+
+	return result, nil
 }
 
-func (r *DockerRuntime) acquireContainer(ctx context.Context, m *ExecutionMetrics) (*pool.Container, error) {
+func (r *DockerRuntime) acquireContainer(
+	ctx context.Context,
+	m *ExecutionMetrics,
+) (*pool.Container, bool, error) {
 	poolTimer := NewTimer()
 	c, err := r.Pool.Acquire(ctx)
 	m.PoolAcquireTime = poolTimer.Elapsed()
@@ -132,17 +173,29 @@ func (r *DockerRuntime) acquireContainer(ctx context.Context, m *ExecutionMetric
 		m.WasWarmStart = true
 		m.ContainerID = c.ID
 		fmt.Printf("🔥 WARM: Container %s (reused %dx)\n", c.ID[:12], c.UseCount)
-		return c, nil
+
+		// Record warm start metric
+		if r.metricsCollector != nil {
+			r.metricsCollector.RecordWarmStart(r.runtimeType)
+		}
+
+		return c, true, nil
 	}
 
 	nc, err := r.Pool.CreateNew(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create new container: %w", err)
+		return nil, false, fmt.Errorf("failed to create new container: %w", err)
 	}
 	m.WasWarmStart = false
 	m.ContainerID = nc.ID
 	fmt.Printf("❄️  COLD: Container %s (pool size: %d)\n", nc.ID[:12], r.Pool.Size())
-	return nc, nil
+
+	// Record cold start metric
+	if r.metricsCollector != nil {
+		r.metricsCollector.RecordColdStart(r.runtimeType)
+	}
+
+	return nc, false, nil
 }
 
 func (r *DockerRuntime) releaseContainer(ctx context.Context, c *pool.Container, m *ExecutionMetrics) {
