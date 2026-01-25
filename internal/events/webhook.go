@@ -63,6 +63,11 @@ func (h *WebhookHandler) HandleRequest(
 	payload []byte,
 	headers map[string]string,
 ) error {
+	// Ensure path starts with /
+	if len(path) > 0 && path[0] != '/' {
+		path = "/" + path
+	}
+
 	webhook, err := h.repository.GetWebhookByPath(ctx, path)
 	if err != nil {
 		return err

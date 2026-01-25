@@ -3,6 +3,7 @@
 CREATE TABLE IF NOT EXISTS cron_triggers (
     id VARCHAR(255) PRIMARY KEY,
     function_id VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
     cron_expression VARCHAR(100) NOT NULL,
     timezone VARCHAR(50) NOT NULL DEFAULT 'UTC',
     enabled BOOLEAN NOT NULL DEFAULT true,

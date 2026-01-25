@@ -236,10 +236,8 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract function ID from path
-	functionID := r.URL.Path[len("/functions/"):]
-	if idx := len(functionID) - len("/invoke"); idx > 0 {
-		functionID = functionID[:idx]
-	}
+	vars := mux.Vars(r)
+	functionID := vars["id"]
 
 	if functionID == "" {
 		h.respondError(
@@ -417,7 +415,8 @@ func (h *Handler) GetFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	functionID := r.URL.Path[len("/funtions/"):]
+	vars := mux.Vars(r)
+	functionID := vars["id"]
 
 	function, err := h.functionService.GetFunction(r.Context(), functionID)
 	if err != nil {

@@ -45,6 +45,9 @@ docker-logs: ## View docker logs
 build: ## Build binary
 	go build -o mini-lambda cmd/server/main.go
 
+build-linux: ## Build binary for Linux (required for Docker)
+	GOOS=linux GOARCH=amd64 go build -o mini-lambda-linux cmd/server/main.go
+
 fmt: ## Format code (including 80-column line wrapping)
 	go fmt ./...
 	go install github.com/segmentio/golines@latest
