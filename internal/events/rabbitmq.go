@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	exchangeName    = "mini-lambda-events"
-	exchangeType    = "topic"
-	dlqExchangeName = "mini-lambda-dlq"
+	exchangeName      = "mini-lambda-events"
+	exchangeType      = "topic"
+	dlqExchangeName   = "mini-lambda-dlq"
+	retryExchangeName = "mini-lambda-retry"
+	waitQueueName     = "retry.wait"
 )
 
 type RabbitMQEventBus struct {
@@ -50,6 +52,7 @@ func NewRabbitMQEventBus(
 		return nil, fmt.Errorf("failed to open a channel: %w", err)
 	}
 
+	// 1. Main Exchange
 	if err := ch.ExchangeDeclare(
 		exchangeName,
 		exchangeType,
@@ -61,6 +64,53 @@ func NewRabbitMQEventBus(
 	); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to declare exchange: %w", err)
+	}
+
+	// 2. Retry Exchange
+	if err := ch.ExchangeDeclare(
+		retryExchangeName,
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare retry exchange: %w", err)
+	}
+
+	// 3. Wait Queue (TTL + DLX points back to Main Exchange)
+	args := amqp.Table{
+		"x-dead-letter-exchange": exchangeName, // Send back to main exchange after TTL
+		"x-message-ttl":          int32(5000),  // 5 seconds
+	}
+	_, err = ch.QueueDeclare(
+		waitQueueName,
+		true,
+		false,
+		false,
+		false,
+		args,
+	)
+	if err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare wait queue: %w", err)
+	}
+
+	// Bind Wait Queue to Retry Exchange (catch-all)
+	if err := ch.QueueBind(
+		waitQueueName,
+		"#", // Routing key pattern
+		retryExchangeName,
+		false,
+		nil,
+	); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to bind wait queue: %w", err)
 	}
 
 	// Declare DLQ exchange
@@ -316,9 +366,39 @@ func (b *RabbitMQEventBus) handleMessage(
 		log.Printf("Failed to process event: %v", err)
 
 		if event.RetryCount < event.MaxRetries {
-			msg.Nack(false, true) // re-queue
+			// Increment retry count
+			event.RetryCount++
+
+			// Re-publish to Retry Exchange
+			body, _ := json.Marshal(event)
+
+			err := b.channel.PublishWithContext(
+				ctx,
+				retryExchangeName, // Publish to retry exchange
+				msg.RoutingKey,    // Keep original routing key
+				false,
+				false,
+				amqp.Publishing{
+					ContentType:  "application/json",
+					Body:         body,
+					DeliveryMode: amqp.Persistent,
+					Timestamp:    time.Now(),
+					Headers:      msg.Headers,
+				},
+			)
+
+			if err != nil {
+				log.Printf("CRITICAL: Failed to publish retry: %v", err)
+				msg.Nack(false, false) // Drop if we can't retry
+				return
+			}
+
+			log.Printf("🔄 Event scheduled for retry %d/%d (5s delay)", event.RetryCount, event.MaxRetries)
+			msg.Ack(false) // Ack original message
+			return
 		} else {
-			msg.Nack(false, false) // send to DLQ
+			// Max retries exceeded, processor.Process has already handled DLQ logging
+			msg.Nack(false, false) // Drop from main queue
 		}
 		return
 	}

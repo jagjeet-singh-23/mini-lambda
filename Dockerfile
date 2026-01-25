@@ -1,7 +1,12 @@
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates curl docker-cli
+RUN apk add --no-cache ca-certificates curl docker-cli tar
+
+# Install migrate tool
+RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.17.0/migrate.linux-amd64.tar.gz | tar xvz && \
+    mv migrate /usr/bin/migrate && \
+    chmod +x /usr/bin/migrate
 
 # Create non-root user
 RUN addgroup -g 1000 lambda && \

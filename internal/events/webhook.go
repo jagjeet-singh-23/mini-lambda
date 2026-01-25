@@ -77,10 +77,13 @@ func (h *WebhookHandler) HandleRequest(
 		return fmt.Errorf("webhook not found")
 	}
 
-	if signature, exists := headers[webhook.SignatureHeader]; exists {
-		if !h.ValidateSignature(webhook, payload, signature) {
-			return fmt.Errorf("invalid signature")
-		}
+	signature, exists := headers[webhook.SignatureHeader]
+	if !exists {
+		return fmt.Errorf("missing signature header: %s", webhook.SignatureHeader)
+	}
+
+	if !h.ValidateSignature(webhook, payload, signature) {
+		return fmt.Errorf("invalid signature")
 	}
 
 	event := &domain.Event{

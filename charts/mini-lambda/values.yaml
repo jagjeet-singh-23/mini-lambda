@@ -1,0 +1,58 @@
+replicaCount: 3
+
+image:
+  repository: mini-lambda
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+# Application Specific Config
+env:
+  dbName: mini_lambda
+  s3Bucket: lambda-functions
+
+# Feature Flag: Mount node docker socket (Required for Phase 1 runtime)
+# WARNING: Security risk, use only in dev/isolated clusters
+mountDockerSocket: true
+dockerSocketPath: /var/run/docker.sock
+
+# Dependencies Configuration
+postgres:
+  enabled: true
+  user: postgres
+  password: postgres_password
+  db: mini_lambda
+
+rabbitmq:
+  enabled: true
+  user: guest
+  password: guest_password
+
+minio:
+  enabled: true
+  accessKey: minioadmin
+  secretKey: minioadmin
+
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+  grafana:
+    enabled: true

@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-server
+  labels:
+    app: {{ .Release.Name }}
+    component: server
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+      component: server
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+        component: server
+    spec:
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox:latest
+          command: ['sh', '-c', 'until nc -z {{ .Release.Name }}-postgres 5432 && nc -z {{ .Release.Name }}-rabbitmq 5672; do echo waiting for dependencies; sleep 2; done']
+      containers:
+        - name: server
+          {{- if .Values.mountDockerSocket }}
+          securityContext:
+            runAsUser: 0
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+          env:
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          {{- if .Values.mountDockerSocket }}
+          volumeMounts:
+            - name: docker-socket
+              mountPath: {{ .Values.dockerSocketPath }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      {{- if .Values.mountDockerSocket }}
+      volumes:
+        - name: docker-socket
+          hostPath:
+            path: {{ .Values.dockerSocketPath }}
+      {{- end }}
