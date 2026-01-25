@@ -66,6 +66,31 @@ func NewPostgresRepository(config PostgresConfig) (*PostgresRepository, error) {
 	return repo, nil
 }
 
+// Helper constructors for specific interfaces
+func NewPostgresFunctionRepository(db *sql.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
+}
+
+func NewPostgresExecutionRepository(db *sql.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
+}
+
+func NewPostgresCronRepository(db *sql.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
+}
+
+func NewPostgresWebhookRepository(db *sql.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
+}
+
+func NewPostgresEventAuditRepository(db *sql.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
+}
+
+func NewPostgresDeadLetterQueue(db *sql.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
+}
+
 // initSchema creates the database tables if they don't exist
 func (r *PostgresRepository) initSchema(ctx context.Context) error {
 	schema := `
@@ -86,6 +111,57 @@ func (r *PostgresRepository) initSchema(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_functions_name ON functions(name);
 	CREATE INDEX IF NOT EXISTS idx_functions_runtime ON functions(runtime);
 	CREATE INDEX IF NOT EXISTS idx_functions_created_at ON functions(created_at DESC);
+
+	-- Cron Triggers table
+	CREATE TABLE IF NOT EXISTS cron_triggers (
+		id VARCHAR(255) PRIMARY KEY,
+		function_id VARCHAR(255) NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
+		name VARCHAR(255) NOT NULL,
+		cron_expression VARCHAR(255) NOT NULL,
+		timezone VARCHAR(255) NOT NULL,
+		enabled BOOLEAN NOT NULL DEFAULT true,
+		last_run_at TIMESTAMP,
+		next_run_at TIMESTAMP,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_cron_function_id ON cron_triggers(function_id);
+	
+	-- Event Audit Logs table
+	CREATE TABLE IF NOT EXISTS event_audit_logs (
+		id VARCHAR(255) PRIMARY KEY, -- using uuid
+		event_id VARCHAR(255) NOT NULL,
+		function_id VARCHAR(255) NOT NULL,
+		event_type VARCHAR(50) NOT NULL,
+		status VARCHAR(50) NOT NULL,
+		duration_ms BIGINT,
+		error_message TEXT,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_audit_function_id ON event_audit_logs(function_id);
+	CREATE INDEX IF NOT EXISTS idx_audit_created_at ON event_audit_logs(created_at DESC);
+
+	-- Dead Letter Queue table
+	CREATE TABLE IF NOT EXISTS dead_letter_queue (
+		id VARCHAR(255) PRIMARY KEY,
+		event_id VARCHAR(255) NOT NULL,
+		function_id VARCHAR(255) NOT NULL,
+		event_type VARCHAR(50) NOT NULL,
+		payload JSONB NOT NULL,
+		error_message TEXT,
+		retry_count INTEGER NOT NULL DEFAULT 0,
+		max_retries INTEGER NOT NULL,
+		first_attempt_at TIMESTAMP NOT NULL,
+		last_attempt_at TIMESTAMP,
+		next_retry_at TIMESTAMP,
+		status VARCHAR(50) NOT NULL DEFAULT 'failed',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_dlq_function_id ON dead_letter_queue(function_id);
+	CREATE INDEX IF NOT EXISTS idx_dlq_status ON dead_letter_queue(status);
 	
 	CREATE OR REPLACE FUNCTION update_updated_at_column()
 	RETURNS TRIGGER AS $$
@@ -98,6 +174,34 @@ func (r *PostgresRepository) initSchema(ctx context.Context) error {
 	DROP TRIGGER IF EXISTS update_functions_updated_at ON functions;
 	CREATE TRIGGER update_functions_updated_at
 		BEFORE UPDATE ON functions
+		FOR EACH ROW
+		EXECUTE FUNCTION update_updated_at_column();
+
+	DROP TRIGGER IF EXISTS update_cron_updated_at ON cron_triggers;
+	CREATE TRIGGER update_cron_updated_at
+		BEFORE UPDATE ON cron_triggers
+		FOR EACH ROW
+		EXECUTE FUNCTION update_updated_at_column();
+
+	-- Webhooks table
+	CREATE TABLE IF NOT EXISTS webhooks (
+		id VARCHAR(255) PRIMARY KEY,
+		function_id VARCHAR(255) NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
+		name VARCHAR(255) NOT NULL,
+		path VARCHAR(255) NOT NULL UNIQUE,
+		secret VARCHAR(255) NOT NULL,
+		signature_header VARCHAR(255) NOT NULL,
+		enabled BOOLEAN NOT NULL DEFAULT true,
+		headers JSONB,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_webhooks_function_id ON webhooks(function_id);
+
+	DROP TRIGGER IF EXISTS update_webhooks_updated_at ON webhooks;
+	CREATE TRIGGER update_webhooks_updated_at
+		BEFORE UPDATE ON webhooks
 		FOR EACH ROW
 		EXECUTE FUNCTION update_updated_at_column();
 	`

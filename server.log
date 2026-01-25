@@ -1,0 +1,3 @@
+2026/01/25 07:02:55 🚀 Starting Mini-Lambda Event-Driven Platform...
+2026/01/25 07:02:55 ✅ Database connected
+2026/01/25 07:02:55 Failed to initialize event bus: failed to declare DLQ exchange: Exception (406) Reason: "PRECONDITION_FAILED - inequivalent arg 'type' for exchange 'mini-lambda-dlq' in vhost '/': received 'fanout' but current is 'topic'"

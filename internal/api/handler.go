@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/jagjeet-singh-23/mini-lambda/internal/domain"
 	"github.com/jagjeet-singh-23/mini-lambda/pkg/utils"
 )
@@ -626,4 +627,64 @@ func (h *Handler) respondJSON(
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+func (h *Handler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		h.respondError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only PUT method allowed")
+		return
+	}
+
+	h.respondError(w, http.StatusNotImplemented, "not_implemented", "Update function not implemented")
+}
+
+func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		h.respondError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only DELETE method allowed")
+		return
+	}
+
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	if err := h.functionService.DeleteFunction(r.Context(), id); err != nil {
+		if err == domain.ErrFunctionNotFound {
+			h.respondError(w, http.StatusNotFound, "not_found", "Function not found")
+		} else {
+			h.respondError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) GetExecutions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.respondError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only GET method allowed")
+		return
+	}
+
+	vars := mux.Vars(r)
+	functionID := vars["id"]
+
+	executions, err := h.functionService.GetExecutionHistory(
+		r.Context(),
+		functionID,
+		50,
+		0,
+	)
+	if err != nil {
+		h.respondError(
+			w,
+			http.StatusInternalServerError,
+			"failed_to_get_history",
+			err.Error(),
+		)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"executions": executions,
+		"count":      len(executions),
+	})
 }

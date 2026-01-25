@@ -1,159 +1,62 @@
 package api
 
 import (
-	"context"
-	"fmt"
-	"log"
 	"net/http"
-	"strings"
-	"time"
 
-	"github.com/jagjeet-singh-23/mini-lambda/internal/runtime"
+	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-type Router struct {
-	handler *Handler
-	mux     *http.ServeMux
-}
+// SetupRouter configures all application routes
+func SetupRouter(handler *Handler, eventHandler *EventHandler) *mux.Router {
+	router := mux.NewRouter()
 
-func NewRouter(handler *Handler) *Router {
-	router := &Router{
-		handler: handler,
-		mux:     http.NewServeMux(),
-	}
-	router.setupRoutes()
+	// Health check
+	router.HandleFunc("/health", HealthCheck).Methods("GET")
+
+	// Prometheus metrics
+	router.Handle("/metrics", promhttp.Handler())
+
+	// API v1
+	api := router.PathPrefix("/api/v1").Subrouter()
+
+	// Function management
+	api.HandleFunc("/functions", handler.CreateFunction).Methods("POST")
+	api.HandleFunc("/functions", handler.ListFunctions).Methods("GET")
+	api.HandleFunc("/functions/{id}", handler.GetFunction).Methods("GET")
+	api.HandleFunc("/functions/{id}", handler.UpdateFunction).Methods("PUT")
+	api.HandleFunc("/functions/{id}", handler.DeleteFunction).Methods("DELETE")
+
+	// Function execution
+	api.HandleFunc("/functions/{id}/invoke", handler.InvokeFunction).Methods("POST")
+	api.HandleFunc("/functions/{id}/executions", handler.GetExecutions).Methods("GET")
+
+	// Cron triggers
+	api.HandleFunc("/functions/{id}/triggers/cron", eventHandler.CreateCronTrigger).Methods("POST")
+	api.HandleFunc("/functions/{id}/triggers/cron", eventHandler.ListCronTriggers).Methods("GET")
+	api.HandleFunc("/triggers/cron/{id}", eventHandler.DeleteCronTrigger).Methods("DELETE")
+
+	// Webhooks
+	api.HandleFunc("/functions/{id}/webhooks", eventHandler.CreateWebhook).Methods("POST")
+	api.HandleFunc("/webhooks/{id}", eventHandler.DeleteWebhook).Methods("DELETE")
+
+	// Webhook receiver (public endpoint, no /api/v1 prefix)
+	router.HandleFunc("/webhooks/{path:.*}", eventHandler.HandleWebhook).Methods("POST", "GET")
+
+	// Dead Letter Queue
+	api.HandleFunc("/dlq", eventHandler.ListDeadLetterQueue).Methods("GET")
+	api.HandleFunc("/dlq/{id}/retry", eventHandler.RetryDeadLetterItem).Methods("POST")
+	api.HandleFunc("/dlq/{id}", eventHandler.DeleteDeadLetterItem).Methods("DELETE")
+
+	// Event audit logs
+	api.HandleFunc("/functions/{id}/events", eventHandler.GetEventAuditLog).Methods("GET")
+
 	return router
 }
 
-func (r *Router) setupRoutes() {
-	r.mux.HandleFunc("/health", r.logRequest(r.handler.HealthCheck))
-	r.mux.HandleFunc("/stats/pools", r.logRequest(r.handler.PoolStats))
-	r.mux.HandleFunc("/stats/executions", r.logRequest(r.handler.GetExecutionStats))
-	r.mux.HandleFunc("/functions", r.logRequest(r.routeFunctions))
-	r.mux.HandleFunc("/functions/", r.logRequest(r.routeFunctionsByID))
-
-	// Metrics endpoint (Prometheus format)
-	metricsCollector := r.handler.runtimeManager.(*runtime.Manager).GetMetricsCollector()
-	r.mux.Handle("/metrics", metricsCollector.Handler())
-}
-
-func (r *Router) routeFunctions(w http.ResponseWriter, req *http.Request) {
-	if req.URL.Path != "/functions" {
-		http.NotFound(w, req)
-		return
-	}
-
-	switch req.Method {
-	case http.MethodPost:
-		r.handler.CreateFunction(w, req)
-	case http.MethodGet:
-		r.handler.ListFunctions(w, req)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (r *Router) routeFunctionsByID(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/functions/")
-
-	segments := strings.Split(path, "/")
-
-	if len(segments) == 0 || segments[0] == "" {
-		http.NotFound(w, req)
-		return
-	}
-
-	if len(segments) == 2 && segments[1] == "invoke" {
-		if req.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		r.handler.InvokeFunction(w, req)
-		return
-	}
-
-	if len(segments) == 2 && segments[1] == "executions" {
-		if req.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		r.handler.GetExecutionHistory(w, req)
-		return
-	}
-
-	if len(segments) == 1 {
-		if req.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		r.handler.GetFunction(w, req)
-		return
-	}
-
-	http.NotFound(w, req)
-}
-
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.mux.ServeHTTP(w, req)
-}
-
-func (r *Router) logRequest(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		start := time.Now()
-		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
-		next(wrapped, req)
-
-		duration := time.Since(start)
-		log.Printf(
-			"[%s] %s %s - %d (%s)",
-			req.Method,
-			req.URL.Path,
-			req.RemoteAddr,
-			wrapped.statusCode,
-			duration,
-		)
-	}
-}
-
-type responseWriter struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-func (rw *responseWriter) WriteHeader(code int) {
-	rw.statusCode = code
-	rw.ResponseWriter.WriteHeader(code)
-}
-
-type Server struct {
-	httpServer *http.Server
-	router     *Router
-}
-
-func NewServer(port int, handler *Handler) *Server {
-	router := NewRouter(handler)
-
-	return &Server{
-		httpServer: &http.Server{
-			Addr:         fmt.Sprintf(":%d", port),
-			Handler:      router,
-			ReadTimeout:  15 * time.Second,
-			WriteTimeout: 15 * time.Second,
-			IdleTimeout:  60 * time.Second,
-		},
-		router: router,
-	}
-}
-
-func (s *Server) Start() error {
-	log.Printf("Starting mini-lambda server on %s", s.httpServer.Addr)
-	return s.httpServer.ListenAndServe()
-}
-
-func (s *Server) Shutdown(ctx context.Context) error {
-	log.Println("Shutting down server...")
-	return s.httpServer.Shutdown(ctx)
+// HealthCheck returns service health status
+func HealthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "healthy"}`))
 }
