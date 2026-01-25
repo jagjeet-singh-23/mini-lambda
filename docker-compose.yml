@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
@@ -35,6 +33,23 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: mini-lambda-rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    ports:
+      - "5672:5672" # AMQP protocol
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   prometheus:
     image: prom/prometheus:latest
@@ -98,11 +113,14 @@ services:
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET=lambda-functions
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - INSTANCE_ID=1
     depends_on:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -122,11 +140,14 @@ services:
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET=lambda-functions
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - INSTANCE_ID=2
     depends_on:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -146,11 +167,14 @@ services:
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET=lambda-functions
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - INSTANCE_ID=3
     depends_on:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -159,5 +183,6 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  rabbitmq_data:
   prometheus_data:
   grafana_data:

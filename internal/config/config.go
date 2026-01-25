@@ -11,6 +11,7 @@ type Config struct {
 	Storage  StorageConfig
 	Postgres PostgresConfig
 	S3       S3Config
+	RabbitMQ RabbitMQConfig
 }
 
 type StorageConfig struct {
@@ -39,6 +40,10 @@ type S3Config struct {
 	Prefix          string
 }
 
+type RabbitMQConfig struct {
+	URL string
+}
+
 func LoadFromEnv() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
@@ -60,6 +65,9 @@ func LoadFromEnv() (*Config, error) {
 			AccessKeyID:     getEnvString("S3_ACCESS_KEY", getEnvString("AWS_ACCESS_KEY_ID", "")),
 			SecretAccessKey: getEnvString("S3_SECRET_KEY", getEnvString("AWS_SECRET_ACCESS_KEY", "")),
 			Prefix:          getEnvString("S3_PREFIX", "functions"),
+		},
+		RabbitMQ: RabbitMQConfig{
+			URL: getEnvString("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 		},
 	}
 
