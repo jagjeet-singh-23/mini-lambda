@@ -63,21 +63,6 @@ func NewRabbitMQEventBus(
 		return nil, fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
-	// Declare main exchange
-	if err := ch.ExchangeDeclare(
-		dlqExchangeName,
-		exchangeType,
-		true,  //durable
-		false, //auto-deleted
-		false, //internal
-		false, //no-wait
-		nil,   //args
-	); err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare DLQ exchange: %w", err)
-	}
-
 	// Declare DLQ exchange
 	if err := ch.ExchangeDeclare(
 		dlqExchangeName,
