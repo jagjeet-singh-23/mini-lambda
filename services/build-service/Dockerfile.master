@@ -1,0 +1,37 @@
+# Build stage
+FROM golang:1.25.7-alpine AS builder
+
+WORKDIR /workspace
+
+# Copy shared module manifests
+COPY shared/go.mod shared/go.sum ./shared/
+
+# Copy service manifests
+COPY services/build-service/go.mod services/build-service/go.sum ./services/build-service/
+
+# Download dependencies
+WORKDIR /workspace/services/build-service
+RUN go mod download
+
+# Copy source code
+COPY shared/ ../../shared/
+COPY services/build-service/ .
+
+# Build binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o build-master ./cmd/master
+
+# Runtime stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /workspace/services/build-service/build-master .
+
+# Expose port
+EXPOSE 8082
+
+# Run
+CMD ["./build-master"]
