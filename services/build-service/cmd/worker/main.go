@@ -14,10 +14,23 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/queue"
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/storage"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
+	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
 	log.Println("🚀 Build Service Worker starting...")
+	
+	// Start metrics server
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		metricsPort := getEnv("METRICS_PORT", "9092")
+		log.Printf("📊 Metrics server listening on :%s", metricsPort)
+		if err := http.ListenAndServe(":"+metricsPort, mux); err != nil {
+			log.Printf("❌ Metrics server error: %v", err)
+		}
+	}()
 
 	// Configuration
 	amqpURL := getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
@@ -112,26 +125,26 @@ func processBuildJob(
 	logger.Info("Downloading package from S3", "key", job.PackageURL)
 	packageData, err := s3Storage.DownloadPackage(ctx, job.PackageURL)
 	if err != nil {
-		return handleBuildFailure(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to download package: %v", err))
+		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to download package: %v", err), startTime)
 	}
 
 	// Validate package
 	if err := zipProcessor.ValidatePackage(packageData); err != nil {
-		return handleBuildFailure(ctx, &job, webhookNotifier, fmt.Sprintf("Invalid package: %v", err))
+		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Invalid package: %v", err), startTime)
 	}
 
 	// Process ZIP package
 	logger.Info("Extracting ZIP package", "function_id", job.FunctionID)
 	extractedDir, err := zipProcessor.Process(ctx, packageData, job.FunctionID)
 	if err != nil {
-		return handleBuildFailure(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to process package: %v", err))
+		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to process package: %v", err), startTime)
 	}
 	defer zipProcessor.Cleanup(job.FunctionID)
 
 	// Upload extracted files to S3
 	logger.Info("Uploading extracted files to S3", "function_id", job.FunctionID)
 	if err := s3Storage.UploadDirectory(ctx, job.FunctionID, extractedDir); err != nil {
-		return handleBuildFailure(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to upload artifacts: %v", err))
+		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to upload artifacts: %v", err), startTime)
 	}
 
 	// Mark as completed
@@ -139,11 +152,10 @@ func processBuildJob(
 	job.CompletedAt = &completedTime
 	job.Status = string(builder.StatusCompleted)
 
-	logger.Info("Build job completed successfully",
-		"job_id", job.ID,
-		"function_id", job.FunctionID,
-		"duration_ms", completedTime.Sub(startTime).Milliseconds(),
 	)
+
+	// Record build metrics
+	metrics.RecordBuild(job.Runtime, "success", completedTime.Sub(startTime).Seconds())
 
 	// Notify: completed
 	if err := webhookNotifier.NotifyCompleted(ctx, job.WebhookURL, job.ID); err != nil {
@@ -176,6 +188,17 @@ func handleBuildFailure(
 	}
 
 	return fmt.Errorf(errorMsg)
+}
+
+func handleBuildFailureWithMetrics(
+	ctx context.Context,
+	job *builder.BuildJob,
+	webhookNotifier *builder.WebhookNotifier,
+	errorMsg string,
+	startTime time.Time,
+) error {
+	metrics.RecordBuild(job.Runtime, "failed", time.Since(startTime).Seconds())
+	return handleBuildFailure(ctx, job, webhookNotifier, errorMsg)
 }
 
 func getEnv(key, fallback string) string {
