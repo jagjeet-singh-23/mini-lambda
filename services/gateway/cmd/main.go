@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/ratelimit"
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/router"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
+	"github.com/jagjeet-singh-23/mini-lambda/shared/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -68,18 +69,14 @@ func main() {
 	// Health check
 	mux.HandleFunc("/health", gateway.HandleHealth)
 
-	// Metrics endpoint (for Prometheus)
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "# Gateway metrics\n")
-		fmt.Fprintf(w, "gateway_up 1\n")
-	})
+	// Metrics endpoint
+	mux.Handle("/metrics", promhttp.Handler())
 
 	// HTTP server
 	port := getEnv("PORT", "8080")
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      loggingMiddleware(mux),
+		Handler:      middleware.MetricsMiddleware("gateway")(loggingMiddleware(mux)),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 45 * time.Second,
 		IdleTimeout:  60 * time.Second,

@@ -1,42 +1,47 @@
-version: "3.8"
+# docker-compose.observability.yml
+version: '3.9'
+
+networks:
+  mini-lambda:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  rabbitmq-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:
 
 services:
-  # ============================================
+  # ==========================================
   # Infrastructure Services
-  # ============================================
-
+  # ==========================================
+  
   postgres:
     image: postgres:15-alpine
     container_name: mini-lambda-postgres
     environment:
+      POSTGRES_DB: mini_lambda
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-dbs.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     networks:
-      - mini-lambda-network
+      - mini-lambda
 
   redis:
     image: redis:7-alpine
     container_name: mini-lambda-redis
+    volumes:
+      - redis-data:/data
     ports:
       - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
     networks:
-      - mini-lambda-network
+      - mini-lambda
 
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
@@ -44,16 +49,13 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
     ports:
-      - "5672:5672" # AMQP
-      - "15672:15672" # Management UI
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - "5672:5672"
+      - "15672:15672"
     networks:
-      - mini-lambda-network
+      - mini-lambda
 
   minio:
     image: minio/minio:latest
@@ -62,131 +64,195 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000" # API
-      - "9001:9001" # Console
     volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     networks:
-      - mini-lambda-network
+      - mini-lambda
 
-  # ============================================
-  # Application Services
-  # ============================================
+  # ==========================================
+  # Application Services with Logging
+  # ==========================================
 
   gateway:
     build:
-      context: ../..
+      context: .
       dockerfile: services/gateway/Dockerfile
+    image: mini-lambda-gateway:latest
     container_name: mini-lambda-gateway
-    environment:
-      PORT: "8080"
-      LAMBDA_SERVICE_URL: "http://lambda-service:8081"
-      BUILD_SERVICE_URL: "http://build-master:8082"
-      REDIS_ADDR: "redis:6379"
     ports:
       - "8080:8080"
-    depends_on:
-      redis:
-        condition: service_healthy
-      lambda-service:
-        condition: service_started
-      build-master:
-        condition: service_started
-    networks:
-      - mini-lambda-network
-    restart: unless-stopped
-
-  lambda-service:
-    build:
-      context: ../..
-      dockerfile: services/lambda-service/Dockerfile
-    container_name: mini-lambda-lambda-service
     environment:
+      SERVICE_NAME: gateway
+      LOG_LEVEL: info
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: lambda_service_db
-      S3_ENDPOINT: "http://minio:9000"
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      S3_BUCKET: mini-lambda
-      REDIS_ADDR: "redis:6379"
-      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
-    ports:
-      - "8081:8081"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      REDIS_URL: redis:6379
+      BUILD_SERVICE_URL: http://build-master:8082
+      LAMBDA_SERVICE_URL: http://lambda-service:8081
     networks:
-      - mini-lambda-network
-    restart: unless-stopped
+      - mini-lambda
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service,environment"
+    labels:
+      service: "gateway"
+      environment: "development"
 
   build-master:
     build:
-      context: ../..
+      context: .
       dockerfile: services/build-service/Dockerfile.master
+    image: mini-lambda-build-master:latest
     container_name: mini-lambda-build-master
-    environment:
-      PORT: "8082"
-      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
-      S3_ENDPOINT: "http://minio:9000"
-      S3_REGION: us-east-1
-      S3_BUCKET: mini-lambda
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
     ports:
       - "8082:8082"
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+    environment:
+      SERVICE_NAME: build-master
+      LOG_LEVEL: info
+      POSTGRES_HOST: postgres
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
     networks:
-      - mini-lambda-network
-    restart: unless-stopped
+      - mini-lambda
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      service: "build-master"
+      environment: "development"
 
   build-worker:
     build:
-      context: ../..
+      context: .
       dockerfile: services/build-service/Dockerfile.worker
+    image: mini-lambda-build-worker:latest
     environment:
-      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
-      S3_ENDPOINT: "http://minio:9000"
-      S3_REGION: us-east-1
-      S3_BUCKET: mini-lambda
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      WORK_DIR: /tmp/build-worker
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+      SERVICE_NAME: build-worker
+      LOG_LEVEL: info
+      POSTGRES_HOST: postgres
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      S3_ENDPOINT: http://minio:9000
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - mini-lambda-network
-    restart: unless-stopped
+      - mini-lambda
     deploy:
-      replicas: 2
+      replicas: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      service: "build-worker"
+      environment: "development"
 
-volumes:
-  postgres_data:
-  minio_data:
+  lambda-service:
+    build:
+      context: .
+      dockerfile: services/lambda-service/Dockerfile
+    image: mini-lambda-lambda-service:latest
+    container_name: mini-lambda-lambda-service
+    ports:
+      - "8081:8081"
+    environment:
+      SERVICE_NAME: lambda-service
+      LOG_LEVEL: info
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis:6379
+      S3_ENDPOINT: http://minio:9000
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - mini-lambda
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      service: "lambda-service"
+      environment: "development"
 
-networks:
-  mini-lambda-network:
-    driver: bridge
+  # ==========================================
+  # Observability Stack
+  # ==========================================
+
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mini-lambda-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - mini-lambda
+    restart: unless-stopped
+
+  # Loki - Log Aggregation
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: mini-lambda-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - mini-lambda
+    restart: unless-stopped
+
+  # Promtail - Log Shipper (Sidecar Pattern)
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: mini-lambda-promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - mini-lambda
+    restart: unless-stopped
+
+  # Grafana - Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mini-lambda-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    networks:
+      - mini-lambda
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped

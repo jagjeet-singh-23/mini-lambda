@@ -1,37 +1,51 @@
 # Build stage
 FROM golang:1.25.7-alpine AS builder
 
-WORKDIR /workspace
+RUN apk add --no-cache git
 
-# Copy shared module manifests
+WORKDIR /build
+
+# Layer caching optimization
 COPY shared/go.mod shared/go.sum ./shared/
-
-# Copy service manifests
 COPY services/build-service/go.mod services/build-service/go.sum ./services/build-service/
 
-# Download dependencies
-WORKDIR /workspace/services/build-service
+WORKDIR /build/shared
 RUN go mod download
 
-# Copy source code
-COPY shared/ ../../shared/
-COPY services/build-service/ .
+WORKDIR /build/services/build-service
+RUN go mod download
 
-# Build binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o build-worker ./cmd/worker
+WORKDIR /build
+COPY shared/ ./shared/
+COPY services/build-service/ ./services/build-service/
+
+# Build worker binary
+WORKDIR /build/services/build-service
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a \
+    -o build-worker \
+    ./cmd/worker/main.go
 
 # Runtime stage
-FROM alpine:latest
+FROM alpine:3.19
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add \
+    ca-certificates \
+    tzdata \
+    docker-cli \
+    git
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /workspace/services/build-service/build-worker .
+COPY --from=builder /build/services/build-service/build-worker .
 
-# Create work directory
-RUN mkdir -p /tmp/build-worker
+# Create work directories
+RUN mkdir -p /tmp/build-worker /app/cache && \
+    addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser && \
+    chown -R appuser:appuser /app /tmp/build-worker
 
-# Run
+USER appuser
+
 CMD ["./build-worker"]
