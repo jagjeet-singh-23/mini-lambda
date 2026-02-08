@@ -1,0 +1,142 @@
+groups:
+  - name: mini_lambda_alerts
+    interval: 30s
+    rules:
+      # High Error Rate
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m]) 
+          / 
+          rate(http_requests_total[5m]) 
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.service }}"
+          description: "Error rate is {{ $value | humanizePercentage }} on {{ $labels.service }}"
+
+      # Slow Response Time
+      - alert: SlowResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket[5m])
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow response time on {{ $labels.service }}"
+          description: "95th percentile response time is {{ $value }}s"
+
+      # High Function Failure Rate
+      - alert: HighFunctionFailureRate
+        expr: |
+          rate(function_invocations_total{status="error"}[5m]) 
+          / 
+          rate(function_invocations_total[5m]) 
+          > 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High failure rate for function {{ $labels.function_name }}"
+          description: "Failure rate is {{ $value | humanizePercentage }}"
+
+      # Many Cold Starts
+      - alert: HighColdStartRate
+        expr: |
+          rate(function_cold_starts_total[5m]) 
+          / 
+          rate(function_invocations_total[5m]) 
+          > 0.30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High cold start rate for {{ $labels.function_name }}"
+          description: "Cold start rate is {{ $value | humanizePercentage }}"
+
+      # Build Failures
+      - alert: BuildFailures
+        expr: |
+          rate(builds_total{status="failed"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Builds failing for runtime {{ $labels.runtime }}"
+          description: "Build failure rate: {{ $value }}/s"
+
+      # Queue Backup
+      - alert: QueueBackup
+        expr: queue_depth > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue {{ $labels.queue_name }} is backing up"
+          description: "Queue depth is {{ $value }}"
+
+      # Database Slow Queries
+      - alert: DatabaseSlowQueries
+        expr: |
+          histogram_quantile(0.95, 
+            rate(database_query_duration_seconds_bucket[5m])
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries on {{ $labels.table }}"
+          description: "95th percentile query time is {{ $value }}s"
+
+      # Cache Miss Rate
+      - alert: HighCacheMissRate
+        expr: |
+          rate(cache_misses_total[5m]) 
+          / 
+          (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m])) 
+          > 0.20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High cache miss rate"
+          description: "Cache miss rate is {{ $value | humanizePercentage }}"
+
+      # Service Down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} has been down for more than 1 minute"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_usage_bytes{name=~"mini-lambda.*"}
+            / 
+            container_spec_memory_limit_bytes{name=~"mini-lambda.*"}
+          ) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.name }}"
+          description: "Memory usage is {{ $value | humanizePercentage }}"
+
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: |
+          rate(container_cpu_usage_seconds_total{name=~"mini-lambda.*"}[5m]) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.name }}"
+          description: "CPU usage is {{ $value | humanizePercentage }}"

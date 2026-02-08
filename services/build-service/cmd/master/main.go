@@ -15,6 +15,8 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/queue"
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/storage"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
+	"github.com/jagjeet-singh-23/mini-lambda/shared/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -57,6 +59,9 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 	})
 
+	// Metrics endpoint
+	mux.Handle("/metrics", promhttp.Handler())
+
 	// Create function endpoint
 	mux.HandleFunc("/functions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -70,7 +75,7 @@ func main() {
 	port := getEnv("PORT", "8082")
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      middleware.MetricsMiddleware("build-service-master")(mux),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,

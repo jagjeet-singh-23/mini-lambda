@@ -1,26 +1,13 @@
-# Binaries
-bin/
-*.exe
-*.dll
-*.so
-*.dylib
 
-# Test binary, built with `go test -c`
-*.test
+# Git
+.git/
+.gitignore
+.gitattributes
 
-# Output of the go coverage tool
-*.out
-
-# Dependency directories
-vendor/
-
-# Go workspace file
-go.work
-
-# Environment files
-.env
-.env.local
-.env.*.local
+# Documentation
+*.md
+docs/
+*.txt
 
 # IDE
 .vscode/
@@ -33,16 +20,56 @@ go.work
 .DS_Store
 Thumbs.db
 
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+build/
+
+# Dependencies
+vendor/
+node_modules/
+
 # Logs
 *.log
+logs/
 
-# Database
-*.db
-*.sqlite
-
-# Docker
-docker-compose.override.yml
+# Test coverage
+coverage/
+*.coverage
+*.coverprofile
 
 # Temporary files
 tmp/
 temp/
+*.tmp
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Kubernetes
+*.yaml
+*.yml
+!docker-compose.yml
+
+# Environment
+.env
+.env.*
+!.env.example

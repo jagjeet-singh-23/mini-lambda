@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
+	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
 )
 
 // EventProcessor interface defines the contract for processing events
@@ -84,6 +85,15 @@ func (p *DefaultEventProcessor) Process(
 	execution.IsWarmStart = result.WasWarmStart
 	p.functionService.SaveExecution(ctx, execution)
 
+	// Record metrics
+	metrics.RecordFunctionInvocation(
+		function.ID,
+		function.Name,
+		"success",
+		duration.Seconds(),
+		!result.WasWarmStart,
+	)
+
 	return nil
 }
 
@@ -103,6 +113,15 @@ func (p *DefaultEventProcessor) handleError(
 		DurationMs: duration.Milliseconds(),
 		CreatedAt:  time.Now(),
 	})
+
+	// Record failure metrics
+	metrics.RecordFunctionInvocation(
+		event.FunctionID,
+		"unknown",
+		"failed",
+		duration.Seconds(),
+		false,
+	)
 
 	if event.RetryCount >= event.MaxRetries {
 		dlqItem := &domain.DeadLetterItem{

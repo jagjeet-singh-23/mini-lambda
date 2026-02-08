@@ -18,6 +18,9 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 	_ "github.com/lib/pq"
 	"github.com/robfig/cron/v3"
+
+	"github.com/jagjeet-singh-23/mini-lambda/shared/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -109,6 +112,9 @@ func main() {
 		w.Write([]byte("Lambda Service - Invoke endpoint"))
 	})
 
+	// Metrics endpoint
+	http.Handle("/metrics", promhttp.Handler())
+
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
@@ -116,6 +122,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:         ":8081",
+		Handler:      middleware.MetricsMiddleware("lambda-service")(http.DefaultServeMux),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
