@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/circuitbreaker"
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/ratelimit"
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/router"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
@@ -41,8 +42,12 @@ func main() {
 
 	log.Printf("✅ Rate limiter initialized (capacity: %d, refill: %d/s)", capacity, refillRate)
 
+	// Initialize circuit breaker
+	cb := circuitbreaker.NewCircuitBreaker(5, 10*time.Second)
+	log.Println("✅ Circuit breaker initialized")
+
 	// Initialize gateway
-	gateway := router.NewGateway(config, rateLimiter)
+	gateway := router.NewGateway(config, rateLimiter, cb)
 
 	// Setup HTTP routes
 	mux := http.NewServeMux()

@@ -213,9 +213,10 @@ services:
   loki:
     image: grafana/loki:2.9.0
     container_name: mini-lambda-loki
-    command: -config.file=/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/config.yml
     volumes:
-      - ./observability/loki/loki-config.yml:/etc/loki/local-config.yaml
+      - ./observability/loki/loki-config.yml:/etc/loki/config.yml
+      - ./observability/loki/loki-rules.yml:/etc/loki/rules/fake/rules.yml
       - loki-data:/loki
     ports:
       - "3100:3100"
