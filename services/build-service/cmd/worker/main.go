@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,7 +21,7 @@ import (
 
 func main() {
 	log.Println("🚀 Build Service Worker starting...")
-	
+
 	// Start metrics server
 	go func() {
 		mux := http.NewServeMux()
@@ -152,8 +153,6 @@ func processBuildJob(
 	job.CompletedAt = &completedTime
 	job.Status = string(builder.StatusCompleted)
 
-	)
-
 	// Record build metrics
 	metrics.RecordBuild(job.Runtime, "success", completedTime.Sub(startTime).Seconds())
 
@@ -187,7 +186,7 @@ func handleBuildFailure(
 		logger.Error("Failed to send failed webhook", "error", err)
 	}
 
-	return fmt.Errorf(errorMsg)
+	return fmt.Errorf("%s", errorMsg)
 }
 
 func handleBuildFailureWithMetrics(

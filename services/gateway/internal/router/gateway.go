@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/circuitbreaker"
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/ratelimit"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 )
@@ -22,16 +23,18 @@ type ServiceConfig struct {
 
 // Gateway handles routing and rate limiting
 type Gateway struct {
-	config      ServiceConfig
-	rateLimiter *ratelimit.TokenBucketLimiter
-	httpClient  *http.Client
+	config         ServiceConfig
+	rateLimiter    *ratelimit.TokenBucketLimiter
+	circuitBreaker *circuitbreaker.CircuitBreaker
+	httpClient     *http.Client
 }
 
 // NewGateway creates a new API gateway
-func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter) *Gateway {
+func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter, cb *circuitbreaker.CircuitBreaker) *Gateway {
 	return &Gateway{
-		config:      config,
-		rateLimiter: rateLimiter,
+		config:         config,
+		rateLimiter:    rateLimiter,
+		circuitBreaker: cb,
 		httpClient: &http.Client{
 			Timeout: config.Timeout,
 		},
@@ -166,7 +169,13 @@ func (g *Gateway) forwardRequest(w http.ResponseWriter, r *http.Request, targetU
 	req.Header.Set("X-Forwarded-For", r.RemoteAddr)
 
 	// Execute request
-	resp, err := g.httpClient.Do(req)
+	var resp *http.Response
+	err = g.circuitBreaker.Call(r.Context(), func() error {
+		var reqErr error
+		resp, reqErr = g.httpClient.Do(req)
+		return reqErr
+	})
+
 	if err != nil {
 		logger.Error("Service unavailable", "service", targetURL, "error", err)
 		http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
