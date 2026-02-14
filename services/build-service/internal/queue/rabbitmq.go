@@ -95,6 +95,11 @@ func (p *Publisher) Close() error {
 	return nil
 }
 
+// GetConnection returns the underlying AMQP connection
+func (p *Publisher) GetConnection() *amqp.Connection {
+	return p.conn
+}
+
 // Consumer consumes messages from RabbitMQ
 type Consumer struct {
 	conn    *amqp.Connection

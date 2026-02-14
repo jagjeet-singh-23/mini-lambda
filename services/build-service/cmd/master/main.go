@@ -19,7 +19,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+const QueueName = "build-jobs"
+
 func main() {
+
 	log.Println("🚀 Build Service Master starting...")
 
 	// Configuration
@@ -50,6 +53,15 @@ func main() {
 	// Initialize webhook notifier
 	webhookNotifier := builder.NewWebhookNotifier()
 
+	// Initialize backpressure manager
+	backpressureManager := queue.NewBackpressureManager(publisher.GetConnection(), QueueName)
+
+	// Start monitoring queue depth
+	// using a background context that will be cancelled when the main function exits
+	monitorCtx, monitorCancel := context.WithCancel(context.Background())
+	defer monitorCancel()
+	go backpressureManager.MonitorQueueDepth(monitorCtx)
+
 	// Create HTTP server
 	mux := http.NewServeMux()
 
@@ -69,7 +81,7 @@ func main() {
 			return
 		}
 
-		handleCreateFunction(w, r, publisher, s3Storage, webhookNotifier)
+		handleCreateFunction(w, r, publisher, s3Storage, webhookNotifier, backpressureManager)
 	})
 
 	port := getEnv("PORT", "8082")
@@ -112,8 +124,22 @@ func handleCreateFunction(
 	publisher *queue.Publisher,
 	s3Storage *storage.S3Storage,
 	webhookNotifier *builder.WebhookNotifier,
+	backpressureManager *queue.BackpressureManager,
 ) {
 	ctx := r.Context()
+
+	// Check backpressure
+	canAccept, msg, err := backpressureManager.CanAcceptRequest(ctx)
+	if err != nil {
+		logger.Error("Failed to check backpressure", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	if !canAccept {
+		http.Error(w, msg, http.StatusServiceUnavailable)
+		return
+	}
 
 	// Parse request
 	var req builder.CreateFunctionRequest
@@ -159,7 +185,7 @@ func handleCreateFunction(
 	}
 
 	// Publish to RabbitMQ
-	if err := publisher.Publish(ctx, "build-jobs", job); err != nil {
+	if err := publisher.Publish(ctx, QueueName, job); err != nil {
 		logger.Error("Failed to publish build job", "error", err)
 		http.Error(w, "Failed to queue build job", http.StatusInternalServerError)
 		return
