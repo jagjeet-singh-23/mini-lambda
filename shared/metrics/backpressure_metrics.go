@@ -7,13 +7,6 @@ import (
 
 var (
 	// Queue metrics
-	QueueDepthGauge = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "queue_depth",
-			Help: "Current queue depth",
-		},
-		[]string{"queue_name"},
-	)
 
 	// Backpressure metrics
 	BackpressureRejectionsTotal = promauto.NewCounterVec(
