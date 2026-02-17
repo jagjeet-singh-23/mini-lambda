@@ -45,4 +45,15 @@ type WebhookPayload struct {
 	Status    string    `json:"status"`
 	Timestamp time.Time `json:"timestamp"`
 	Error     string    `json:"error,omitempty"`
+	UserID    string    `json:"user_id,omitempty"` // For future multi-tenancy
+}
+
+// BuildMetadata stores information about a build request for idempotency
+type BuildMetadata struct {
+	FunctionID string    `json:"function_id"`
+	JobID      string    `json:"job_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	Runtime    string    `json:"runtime"`
+	Name       string    `json:"name"`
+	Hash       string    `json:"hash"`
 }

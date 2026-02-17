@@ -51,8 +51,24 @@ func (zp *ZIPProcessor) extractZIP(data []byte, targetDir string) error {
 		return fmt.Errorf("failed to read ZIP: %w", err)
 	}
 
+	// Limits for Zip Bomb protection
+	maxSize := int64(100 * 1024 * 1024) // 100 MB
+	maxFiles := 1000
+
+	var totalSize int64
+	var fileCount int
+
 	for _, file := range zipReader.File {
-		if err := zp.extractFile(file, targetDir); err != nil {
+		fileCount++
+		if fileCount > maxFiles {
+			return fmt.Errorf("too many files in ZIP: limit is %d", maxFiles)
+		}
+
+		if file.UncompressedSize64 > uint64(maxSize) {
+			return fmt.Errorf("file %s too large: %d bytes", file.Name, file.UncompressedSize64)
+		}
+
+		if err := zp.extractFile(file, targetDir, &totalSize, maxSize); err != nil {
 			return err
 		}
 	}
@@ -61,7 +77,7 @@ func (zp *ZIPProcessor) extractZIP(data []byte, targetDir string) error {
 }
 
 // extractFile extracts a single file from ZIP
-func (zp *ZIPProcessor) extractFile(file *zip.File, targetDir string) error {
+func (zp *ZIPProcessor) extractFile(file *zip.File, targetDir string, totalSize *int64, maxSize int64) error {
 	// Construct target path
 	targetPath := filepath.Join(targetDir, file.Name)
 
@@ -94,9 +110,36 @@ func (zp *ZIPProcessor) extractFile(file *zip.File, targetDir string) error {
 	}
 	defer dstFile.Close()
 
-	// Copy contents
-	_, err = io.Copy(dstFile, srcFile)
-	return err
+	// Copy contents with size limit
+	// We read in chunks to track size
+	buf := make([]byte, 32*1024) // 32KB buffer
+	for {
+		n, readErr := srcFile.Read(buf)
+		if n > 0 {
+			// Check total size
+			*totalSize += int64(n)
+			if *totalSize > maxSize {
+				return fmt.Errorf("total extracted size exceeds limit of %d bytes", maxSize)
+			}
+
+			if _, writeErr := dstFile.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			return readErr
+		}
+	}
+
+	// Copy permissions
+	if err := os.Chmod(targetPath, file.Mode()); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Cleanup removes the extracted directory

@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"time"
 
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
@@ -30,6 +33,10 @@ func (wn *WebhookNotifier) Notify(ctx context.Context, webhookURL, jobID, status
 	if webhookURL == "" {
 		logger.Info("No webhook URL provided, skipping notification")
 		return nil
+	}
+
+	if err := wn.validateWebhookURL(webhookURL); err != nil {
+		return fmt.Errorf("invalid webhook URL: %w", err)
 	}
 
 	payload := WebhookPayload{
@@ -95,4 +102,40 @@ func (wn *WebhookNotifier) NotifyCompleted(ctx context.Context, webhookURL, jobI
 // NotifyFailed notifies that a build job has failed
 func (wn *WebhookNotifier) NotifyFailed(ctx context.Context, webhookURL, jobID, errorMsg string) error {
 	return wn.Notify(ctx, webhookURL, jobID, string(StatusFailed), errorMsg)
+}
+
+// validateWebhookURL checks if the webhook URL is safe (SSRF protection)
+func (wn *WebhookNotifier) validateWebhookURL(rawURL string) error {
+	// Check if private webhooks are allowed
+	if os.Getenv("ALLOW_PRIVATE_WEBHOOKS") == "true" {
+		return nil
+	}
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("invalid scheme: %s", parsedURL.Scheme)
+	}
+
+	hostname := parsedURL.Hostname()
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return fmt.Errorf("failed to resolve hostname: %w", err)
+	}
+
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("webhook URL resolves to private IP: %s", ip)
+		}
+	}
+
+	return nil
+}
+
+// isPrivateIP checks if an IP is in a private block
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast()
 }

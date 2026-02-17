@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -154,6 +157,34 @@ func handleCreateFunction(
 		return
 	}
 
+	// Generate Idempotency Key (SHA256 of Name + Runtime + Package content)
+	hashInput := fmt.Sprintf("%s:%s:%s", req.Name, req.Runtime, string(req.PackageData))
+	hasher := sha256.New()
+	hasher.Write([]byte(hashInput))
+	requestHash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Check for existing build (Idempotency)
+	existingMetadata, exists, err := s3Storage.CheckBuildMetadata(ctx, requestHash)
+	if err != nil {
+		logger.Error("Failed to check build metadata", "error", err)
+		// Proceeding cautiously - if we can't check, we might want to fail or just build again
+		// For now, let's log and proceed, effectively failing open
+	}
+
+	if exists && existingMetadata != nil {
+		logger.Info("Duplicate build request detected", "hash", requestHash, "function_id", existingMetadata.FunctionID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict) // 409 Conflict
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":      "conflict",
+			"message":     "Function with this configuration and code already exists",
+			"function_id": existingMetadata.FunctionID,
+			"job_id":      existingMetadata.JobID,
+			"created_at":  existingMetadata.CreatedAt,
+		})
+		return
+	}
+
 	// Generate IDs
 	functionID, _ := uuid.NewV4()
 	jobID, _ := uuid.NewV4()
@@ -210,6 +241,21 @@ func handleCreateFunction(
 		"job_id", jobID.String(),
 		"function_id", functionID.String(),
 	)
+
+	// Save idempotency metadata
+	// We do this AFTER queuing (or ideally before, but we need the IDs)
+	// If we fail here, the next request will just trigger a new build, which is acceptable
+	metadata := builder.BuildMetadata{
+		FunctionID: functionID.String(),
+		JobID:      jobID.String(),
+		CreatedAt:  time.Now(),
+		Runtime:    req.Runtime,
+		Name:       req.Name,
+		Hash:       requestHash,
+	}
+	if err := s3Storage.SaveBuildMetadata(ctx, requestHash, metadata); err != nil {
+		logger.Error("Failed to save build metadata", "error", err)
+	}
 }
 
 func getEnv(key, fallback string) string {
