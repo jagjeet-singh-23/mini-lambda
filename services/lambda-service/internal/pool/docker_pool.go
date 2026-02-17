@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 )
@@ -338,8 +339,18 @@ func (p *DockerPool) createDockerContainer(
 			Memory:    128 * 1024 * 1024, // 128MB
 			CPUShares: 1024,              // 1 CPU
 		},
-		NetworkMode: "none", // No network access
-		AutoRemove:  false,  // We manage lifecycle
+		NetworkMode:    "none", // No network access
+		AutoRemove:     false,  // We manage lifecycle
+		ReadonlyRootfs: true,   // Read-only filesystem
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeTmpfs,
+				Target: "/tmp",
+				TmpfsOptions: &mount.TmpfsOptions{
+					SizeBytes: 64 * 1024 * 1024, // 64MB /tmp
+				},
+			},
+		},
 	}
 
 	// Create container

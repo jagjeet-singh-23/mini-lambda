@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/builder"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 )
 
@@ -148,5 +150,54 @@ func (s *S3Storage) DeletePackage(ctx context.Context, key string) error {
 	}
 
 	logger.Info("Package deleted successfully", "key", key)
+	return nil
+}
+
+// CheckBuildMetadata checks if a build with the given hash exists
+func (s *S3Storage) CheckBuildMetadata(ctx context.Context, hash string) (*builder.BuildMetadata, bool, error) {
+	key := fmt.Sprintf("metadata/%s.json", hash)
+
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		// If key doesn't exist, return false without error
+		// Note: AWS SDK v2 usually returns a specific error type for NotFound
+		// For simplicity, we assume any error meant it wasn't found or accessible
+		// In production, check for types.NoSuchKey or similar
+		return nil, false, nil
+	}
+	defer result.Body.Close()
+
+	var metadata builder.BuildMetadata
+	if err := json.NewDecoder(result.Body).Decode(&metadata); err != nil {
+		return nil, true, fmt.Errorf("failed to decode metadata: %w", err)
+	}
+
+	return &metadata, true, nil
+}
+
+// SaveBuildMetadata saves build metadata for idempotency
+func (s *S3Storage) SaveBuildMetadata(ctx context.Context, hash string, metadata builder.BuildMetadata) error {
+	key := fmt.Sprintf("metadata/%s.json", hash)
+
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(data),
+		ContentType: aws.String("application/json"),
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to save metadata: %w", err)
+	}
+
 	return nil
 }
