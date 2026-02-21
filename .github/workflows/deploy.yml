@@ -95,11 +95,13 @@ jobs:
 
           export GITHUB_USER=${{ github.repository_owner }}
           # Apply manifest folder
+          kubectl apply -f infrastructure/k8s/manifests/namespace.yaml
+          
           envsubst < infrastructure/k8s/manifests/build-master.yaml | kubectl apply -f -
           envsubst < infrastructure/k8s/manifests/build-worker.yaml | kubectl apply -f -
           envsubst < infrastructure/k8s/manifests/gateway.yaml | kubectl apply -f -
           envsubst < infrastructure/k8s/manifests/lambda-service.yaml | kubectl apply -f -
-          kubectl apply -f infrastructure/k8s/manifests/namespace.yaml
+          
           kubectl apply -f infrastructure/k8s/manifests/configmap.yaml
           kubectl apply -f infrastructure/k8s/manifests/secrets.yaml
           kubectl apply -f infrastructure/k8s/manifests/postgres.yaml
