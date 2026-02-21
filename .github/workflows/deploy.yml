@@ -43,6 +43,10 @@ jobs:
             context: .
             dockerfile: infrastructure/docker/runners/node-runner.Dockerfile
             image: lambda-runner-node
+          - service: db-migrator
+            context: .
+            dockerfile: infrastructure/docker/db-migrator.Dockerfile
+            image: db-migrator
 
     steps:
       - name: Checkout repository
@@ -101,6 +105,7 @@ jobs:
           envsubst < infrastructure/k8s/manifests/build-worker.yaml | kubectl apply -f -
           envsubst < infrastructure/k8s/manifests/gateway.yaml | kubectl apply -f -
           envsubst < infrastructure/k8s/manifests/lambda-service.yaml | kubectl apply -f -
+          envsubst < infrastructure/k8s/manifests/db-migrator.yaml | kubectl apply -f -
           
           kubectl apply -f infrastructure/k8s/manifests/configmap.yaml
           kubectl apply -f infrastructure/k8s/manifests/secrets.yaml
