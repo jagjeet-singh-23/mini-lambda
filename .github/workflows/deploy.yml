@@ -3,7 +3,7 @@ name: CD
 on:
   push:
     branches:
-      - main
+      - stage
 
 env:
   REGISTRY: ghcr.io
@@ -77,7 +77,7 @@ jobs:
       - name: Deploy
         run: |
           cd ~/apps/mini-lambda
-          git pull origin main
-          docker compose -f docker-compose.production.yml pull
-          docker compose -f docker-compose.production.yml up -d
+          git pull origin stage
+          docker compose -f docker-compose.yml pull
+          docker compose -f docker-compose.yml up -d
           docker image prune -f
