@@ -13,6 +13,7 @@ spec:
       labels:
         app: gateway
     spec:
+      enableServiceLinks: false
       containers:
         - name: gateway
           image: ghcr.io/${GITHUB_USER}/gateway:latest

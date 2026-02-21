@@ -13,6 +13,7 @@ spec:
       labels:
         app: build-master
     spec:
+      enableServiceLinks: false
       containers:
         - name: build-master
           image: ghcr.io/${GITHUB_USER}/build-master:latest
