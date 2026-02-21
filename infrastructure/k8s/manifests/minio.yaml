@@ -44,10 +44,13 @@ metadata:
   name: minio
   namespace: mini-lambda
 spec:
+  type: NodePort
   ports:
     - port: 9000
       name: api
+      nodePort: 30090
     - port: 9001
       name: console
+      nodePort: 30091
   selector:
     app: minio
