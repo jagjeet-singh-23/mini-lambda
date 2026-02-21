@@ -9,3 +9,9 @@ nodes:
       - containerPort: 30000 # Exposes node port for Grafana
         hostPort: 3000
         protocol: TCP
+      - containerPort: 30090 # Exposes node port for Minio API
+        hostPort: 9000
+        protocol: TCP
+      - containerPort: 30091 # Exposes node port for Minio Console
+        hostPort: 9001
+        protocol: TCP
