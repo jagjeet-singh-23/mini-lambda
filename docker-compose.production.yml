@@ -7,7 +7,6 @@ networks:
 volumes:
   redis-data:
   minio-data:
-  rabbitmq-data:
   prometheus-data:
   loki-data:
   grafana-data:
@@ -23,23 +22,6 @@ services:
       test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
       interval: 10s
       timeout: 5s
-      retries: 5
-    networks:
-      - mini-lambda
-
-  rabbitmq:
-    image: rabbitmq:3.12.6-management-alpine
-    container_name: mini-lambda-rabbitmq
-    restart: always
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-    healthcheck:
-      test: rabbitmq-diagnostics -q ping
-      interval: 30s
-      timeout: 10s
       retries: 5
     networks:
       - mini-lambda
@@ -119,15 +101,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-mini_lambda}
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqps://${RABBITMQ_USER}:${RABBITMQ_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT:-5671}/}
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     depends_on:
       db-migrator:
         condition: service_completed_successfully
-      rabbitmq:
-        condition: service_healthy
       minio:
         condition: service_healthy
     networks:
@@ -150,14 +130,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-mini_lambda}
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqps://${RABBITMQ_USER}:${RABBITMQ_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT:-5671}/}
       S3_ENDPOINT: http://minio:9000
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       minio:
         condition: service_healthy
     networks:
