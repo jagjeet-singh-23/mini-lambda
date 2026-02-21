@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: build-master
+  namespace: mini-lambda
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: build-master
+  template:
+    metadata:
+      labels:
+        app: build-master
+    spec:
+      containers:
+        - name: build-master
+          image: ghcr.io/${GITHUB_USER}/build-master:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: mini-lambda-config
+          env:
+            - name: SERVICE_NAME
+              value: "build-master"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mini-lambda-secrets
+                  key: MINIO_ROOT_USER
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mini-lambda-secrets
+                  key: MINIO_ROOT_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: build-master
+  namespace: mini-lambda
+spec:
+  ports:
+    - port: 8082
+      targetPort: 8082
+  selector:
+    app: build-master
