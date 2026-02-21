@@ -6,6 +6,7 @@ metadata:
 data:
   LOG_LEVEL: "info"
   POSTGRES_HOST: "postgres"
+  POSTGRES_DB: "mini_lambda"
   REDIS_ADDR: "redis:6379"
   RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
   S3_ENDPOINT: "http://minio:9000"
