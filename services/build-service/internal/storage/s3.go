@@ -44,10 +44,19 @@ func NewS3Storage(endpoint, region, bucket, accessKey, secretKey string) (*S3Sto
 		}
 	})
 
+	logger.Info("Initializing S3 Client", "endpoint", endpoint, "region", region, "bucket", bucket, "accessKey", maskKey(accessKey))
+
 	return &S3Storage{
 		client: client,
 		bucket: bucket,
 	}, nil
+}
+
+func maskKey(k string) string {
+	if len(k) <= 4 {
+		return "****"
+	}
+	return "****" + k[len(k)-4:]
 }
 
 // UploadPackage uploads a package to S3
@@ -64,6 +73,7 @@ func (s *S3Storage) UploadPackage(ctx context.Context, functionID string, data [
 	})
 
 	if err != nil {
+		logger.Error("S3 PutObject failed", "error", err, "bucket", s.bucket, "key", key)
 		return "", fmt.Errorf("failed to upload package: %w", err)
 	}
 
