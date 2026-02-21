@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: build-worker
+  namespace: mini-lambda
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: build-worker
+  template:
+    metadata:
+      labels:
+        app: build-worker
+    spec:
+      containers:
+        - name: build-worker
+          image: ghcr.io/${GITHUB_USER}/build-worker:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: mini-lambda-config
+          env:
+            - name: SERVICE_NAME
+              value: "build-worker"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mini-lambda-secrets
+                  key: MINIO_ROOT_USER
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mini-lambda-secrets
+                  key: MINIO_ROOT_PASSWORD
