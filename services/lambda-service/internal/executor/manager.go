@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
@@ -46,12 +47,26 @@ func (m *Manager) registerDefaultRuntimes() error {
 		{"go1.21", "golang:1.21-alpine"},
 	}
 
+	inKubernetes := os.Getenv("KUBERNETES_SERVICE_HOST") != ""
+
 	for _, config := range runtimeConfigs {
-		runtime, err := NewDockerRuntime(
-			config.runtimeType,
-			config.baseImage,
-			m.metricsCollector,
-		)
+		var runtime domain.Runtime
+		var err error
+
+		if inKubernetes {
+			runtime, err = NewKubernetesRuntime(
+				config.runtimeType,
+				config.baseImage,
+				m.metricsCollector,
+			)
+		} else {
+			runtime, err = NewDockerRuntime(
+				config.runtimeType,
+				config.baseImage,
+				m.metricsCollector,
+			)
+		}
+
 		if err != nil {
 			return fmt.Errorf(
 				"failed to create %s runtime: %w",
