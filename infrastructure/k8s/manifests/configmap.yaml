@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mini-lambda-config
+  namespace: mini-lambda
+data:
+  LOG_LEVEL: "info"
+  POSTGRES_HOST: "postgres"
+  REDIS_ADDR: "redis:6379"
+  RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+  S3_ENDPOINT: "http://minio:9000"
+  BUILD_SERVICE_URL: "http://build-master:8082"
+  LAMBDA_SERVICE_URL: "http://lambda-service:8081"

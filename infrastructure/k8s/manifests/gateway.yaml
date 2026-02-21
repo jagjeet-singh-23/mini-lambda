@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: mini-lambda
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/${GITHUB_USER}/gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: mini-lambda-config
+          env:
+            - name: SERVICE_NAME
+              value: "gateway"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: mini-lambda
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080 # This matches the extraPortMappings in our kind-config
+  selector:
+    app: gateway
