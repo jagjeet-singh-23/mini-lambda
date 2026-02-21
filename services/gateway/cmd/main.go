@@ -52,8 +52,16 @@ func main() {
 	log.Printf("✅ Rate limiter initialized (capacity: %d, refill: %d/s)", capacity, refillRate)
 
 	// Initialize circuit breaker
-	cb := circuitbreaker.NewCircuitBreaker(5, 10*time.Second)
-	log.Println("✅ Circuit breaker initialized")
+	cbMaxFailures, err := strconv.Atoi(getEnv("CB_MAX_FAILURES", "50"))
+	if err != nil {
+		cbMaxFailures = 50
+	}
+	cbResetTimeout, err := strconv.Atoi(getEnv("CB_RESET_TIMEOUT", "10"))
+	if err != nil {
+		cbResetTimeout = 10
+	}
+	cb := circuitbreaker.NewCircuitBreaker(cbMaxFailures, time.Duration(cbResetTimeout)*time.Second)
+	log.Printf("✅ Circuit breaker initialized (max_failures: %d, reset_timeout: %ds)", cbMaxFailures, cbResetTimeout)
 
 	// Initialize gateway
 	gateway := router.NewGateway(config, rateLimiter, cb)
