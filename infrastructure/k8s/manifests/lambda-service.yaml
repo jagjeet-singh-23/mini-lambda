@@ -42,6 +42,7 @@ spec:
       labels:
         app: lambda-service
     spec:
+      enableServiceLinks: false
       serviceAccountName: lambda-executor
       containers:
         - name: lambda-service

@@ -13,6 +13,7 @@ spec:
       labels:
         app: build-worker
     spec:
+      enableServiceLinks: false
       containers:
         - name: build-worker
           image: ghcr.io/${GITHUB_USER}/build-worker:latest
