@@ -94,7 +94,7 @@ services:
       - ./migrations:/migrations
     command:
       - -path=/migrations
-      - -database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-mini_lambda}?sslmode=${POSTGRES_SSLMODE:-disable}
+      - -database=postgres://postgres:postgres@postgres:5432/mini_lambda?sslmode=disable
       - up
     networks:
       - mini-lambda
