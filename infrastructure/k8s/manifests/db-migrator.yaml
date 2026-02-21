@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrator-job
+  namespace: mini-lambda
+spec:
+  # Delete the job if it finishes successfully after 100 seconds
+  ttlSecondsAfterFinished: 100
+  template:
+    spec:
+      containers:
+        - name: migrator
+          image: ghcr.io/${GITHUB_USER}/db-migrator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - -path=/migrations
+            - -database=postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/$(POSTGRES_DB)?sslmode=disable
+            - up
+          envFrom:
+            - configMapRef:
+                name: mini-lambda-config
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mini-lambda-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mini-lambda-secrets
+                  key: POSTGRES_PASSWORD
+      restartPolicy: OnFailure
