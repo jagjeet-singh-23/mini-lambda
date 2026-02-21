@@ -77,6 +77,9 @@ data:
           index:
             prefix: index_
             period: 24h
+    compactor:
+      working_directory: /loki/compactor
+      shared_store: filesystem
     storage_config:
       boltdb_shipper:
         active_index_directory: /loki/boltdb-shipper-active
