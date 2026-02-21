@@ -164,6 +164,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-mini_lambda}
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
       REDIS_ADDR: redis:6379
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqps://${RABBITMQ_USER}:${RABBITMQ_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT:-5671}/}
       S3_ENDPOINT: http://minio:9000
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
