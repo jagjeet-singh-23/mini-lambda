@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -31,8 +32,16 @@ func main() {
 
 	// Initialize rate limiter (token bucket)
 	// Default: 100 requests per second per function
-	capacity := int64(100)
-	refillRate := int64(10) // 10 tokens per second
+	capacity, err := strconv.ParseInt(getEnv("RATE_LIMIT_CAPACITY", "100"), 10, 64)
+	if err != nil {
+		capacity = 100
+		log.Printf("⚠️ Invalid RATE_LIMIT_CAPACITY, defaulting to %d", capacity)
+	}
+	refillRate, err := strconv.ParseInt(getEnv("RATE_LIMIT_REFILL_RATE", "10"), 10, 64)
+	if err != nil {
+		refillRate = 10
+		log.Printf("⚠️ Invalid RATE_LIMIT_REFILL_RATE, defaulting to %d", refillRate)
+	}
 
 	rateLimiter, err := ratelimit.NewTokenBucketLimiter(redisAddr, capacity, refillRate)
 	if err != nil {
