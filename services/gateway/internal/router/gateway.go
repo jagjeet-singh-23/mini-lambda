@@ -31,12 +31,21 @@ type Gateway struct {
 
 // NewGateway creates a new API gateway
 func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter, cb *circuitbreaker.CircuitBreaker) *Gateway {
+	// Custom transport for high throughput testing
+	transport := &http.Transport{
+		MaxIdleConns:        1000,
+		MaxIdleConnsPerHost: 200,
+		MaxConnsPerHost:     0, // unlimited
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	return &Gateway{
 		config:         config,
 		rateLimiter:    rateLimiter,
 		circuitBreaker: cb,
 		httpClient: &http.Client{
-			Timeout: config.Timeout,
+			Transport: transport,
+			Timeout:   config.Timeout,
 		},
 	}
 }
