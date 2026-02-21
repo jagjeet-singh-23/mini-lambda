@@ -73,7 +73,7 @@ func (s *S3Storage) UploadPackage(ctx context.Context, functionID string, data [
 	})
 
 	if err != nil {
-		logger.Error("S3 PutObject failed", "error", err, "bucket", s.bucket, "key", key)
+		logger.Error("S3 PutObject failed", "error", err.Error(), "bucket", s.bucket, "key", key)
 		return "", fmt.Errorf("failed to upload package: %w", err)
 	}
 

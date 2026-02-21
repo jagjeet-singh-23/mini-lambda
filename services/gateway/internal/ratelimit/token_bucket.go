@@ -57,8 +57,18 @@ func (tb *TokenBucketLimiter) Allow(ctx context.Context, key string) (bool, erro
 		local now = tonumber(ARGV[3])
 
 		-- Get current tokens and last refill time
-		local tokens = tonumber(redis.call('GET', bucket_key) or capacity)
-		local last_refill = tonumber(redis.call('GET', timestamp_key) or now)
+		local tokens_str = redis.call('GET', bucket_key)
+		local last_refill_str = redis.call('GET', timestamp_key)
+		
+		local tokens = capacity
+		if tokens_str then
+			tokens = tonumber(tokens_str)
+		end
+		
+		local last_refill = now
+		if last_refill_str then
+			last_refill = tonumber(last_refill_str)
+		end
 
 		-- Calculate tokens to add based on time elapsed
 		local elapsed = now - last_refill
