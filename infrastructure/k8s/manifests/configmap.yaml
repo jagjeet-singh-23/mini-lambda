@@ -10,5 +10,7 @@ data:
   REDIS_ADDR: "redis:6379"
   RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
   S3_ENDPOINT: "http://minio:9000"
+  RATE_LIMIT_CAPACITY: "10000"
+  RATE_LIMIT_REFILL_RATE: "5000"
   BUILD_SERVICE_URL: "http://build-master:8082"
   LAMBDA_SERVICE_URL: "http://lambda-service:8081"
