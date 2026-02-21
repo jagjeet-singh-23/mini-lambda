@@ -42,32 +42,20 @@ In your GitHub repository, go to **Settings > Secrets and variables > Actions** 
 | `SSH_USER`        | The SSH username (e.g., `root` or `ubuntu`)              |
 | `SSH_PRIVATE_KEY` | The **entire content** of the private key (`id_ed25519`) |
 
-## 3. Deployment Commands
+## 3. GitHub Actions CI/CD (Recommended)
 
-### Manual Start
+The easiest way to deploy is to push changes to the `stage` branch. The included GitHub Action (`.github/workflows/deploy.yml`) will automatically:
 
-```bash
-docker compose -f docker-compose.production.yml up -d
-```
+1. Build all docker images
+2. Push them to GitHub Container Registry (GHCR)
+3. Spin up a local `kind` Kubernetes cluster (if not already running)
+4. Deploy the infrastructure manifests
+5. Execute the database migration job (`db-migrator-job`)
+6. Perform a rollout restart on the application deployments
 
-### Scaling Workers
+## 4. Kubernetes Deployment Commands (Manual)
 
-To run multiple build-workers (e.g., 3 workers):
-
-```bash
-docker compose -f docker-compose.production.yml up -d --scale build-worker=3
-```
-
-### Pulling Latest Images (Manual)
-
-```bash
-docker compose -f docker-compose.production.yml pull
-docker compose -f docker-compose.production.yml up -d
-```
-
-## 4. Kubernetes Deployment Commands
-
-If you prefer deploying via Kubernetes instead of Docker Compose, an infrastructure setup is provided using `kind` (Kubernetes in Docker).
+If you prefer deploying manually via Kubernetes without CI/CD, you can use the `kind` cluster setup.
 
 ### Setting up the Kind Cluster
 
@@ -80,7 +68,7 @@ kubectl apply -f infrastructure/k8s/manifests/namespace.yaml
 kubectl apply -f infrastructure/k8s/manifests/configmap.yaml
 kubectl apply -f infrastructure/k8s/manifests/secrets.yaml
 
-# 3. Deploy Databases and Message Brokers
+# 3. Deploy Databases and Storage
 kubectl apply -f infrastructure/k8s/manifests/postgres.yaml
 kubectl apply -f infrastructure/k8s/manifests/redis.yaml
 kubectl apply -f infrastructure/k8s/manifests/rabbitmq.yaml
@@ -92,11 +80,15 @@ kubectl apply -f infrastructure/k8s/manifests/build-master.yaml
 kubectl apply -f infrastructure/k8s/manifests/build-worker.yaml
 kubectl apply -f infrastructure/k8s/manifests/lambda-service.yaml
 
-# 5. (Optional) Deploy Observability Stack
+# 5. Run Database Migrations
+kubectl delete job db-migrator-job -n mini-lambda --ignore-not-found
+kubectl apply -f infrastructure/k8s/manifests/db-migrator.yaml
+
+# 6. Deploy Observability Stack
 kubectl apply -f infrastructure/k8s/manifests/observability/
 ```
 
-### Scaling Workers in Kubernetes
+### Scaling Services in Kubernetes
 
 To run multiple build-workers in K8s:
 
@@ -104,15 +96,26 @@ To run multiple build-workers in K8s:
 kubectl scale deployment build-worker -n mini-lambda --replicas=3
 ```
 
-## 5. Troubleshooting & Monitoring
+## 5. Exposing & Accessing Services Locally
 
-- **Check Logs**: `docker compose -f docker-compose.production.yml logs -f`
-- **Check Status**: `docker compose -f docker-compose.production.yml ps`
-- **Check Stats**: `docker stats`
-- **Observability**:
-  - **Grafana**: `http://<server-ip>:3000` (Default: admin/admin)
-  - **Gateway**: `http://<server-ip>:8080`
+Because this runs inside `kind`, we've exposed specific NodePorts to your local host machine:
 
-### Image Pruning
+- **API Gateway**: `http://localhost:8080` (Port 30080 -> 8080)
+- **MinIO API/S3 Endpoint**: `http://localhost:9000` (Port 30090 -> 9000)
+- **MinIO Console (UI)**: `http://localhost:9001` (Port 30091 -> 9001, Login: minioadmin/minioadmin)
+- **Grafana Dashboards**: `http://localhost:3000` (Port 30000 -> 3000, Login: admin/admin)
 
-The auto-deploy script runs `docker image prune -f` to clean up old images and save disk space.
+To verify the endpoints, run:
+
+```bash
+docker ps
+```
+
+You should see port forwardings attached to the `kind-control-plane` container.
+
+## 6. Troubleshooting & Monitoring
+
+- **Check Pod Status**: `kubectl get pods -n mini-lambda`
+- **Check Specific Pod Logs**: `kubectl logs deploy/gateway -n mini-lambda`
+- **Check Migration Logs**: `kubectl logs job/db-migrator-job -n mini-lambda`
+- **Check Load/Resource Usage**: `kubectl top pods -n mini-lambda` (Requires Metrics Server)
