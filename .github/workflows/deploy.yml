@@ -35,6 +35,14 @@ jobs:
             context: .
             dockerfile: services/lambda-service/Dockerfile
             image: lambda-service
+          - service: lambda-runner-python
+            context: .
+            dockerfile: infrastructure/docker/runners/python-runner.Dockerfile
+            image: lambda-runner-python
+          - service: lambda-runner-node
+            context: .
+            dockerfile: infrastructure/docker/runners/node-runner.Dockerfile
+            image: lambda-runner-node
 
     steps:
       - name: Checkout repository
@@ -80,7 +88,27 @@ jobs:
           git fetch origin
           git checkout stage
           git pull origin stage
+          # Ensure Kind cluster exists (we check if kubectl can reach it)
+          if ! kubectl cluster-info --context kind-kind > /dev/null 2>&1; then
+            kind create cluster --config infrastructure/k8s/kind-config.yaml
+          fi
+
           export GITHUB_USER=${{ github.repository_owner }}
-          docker compose -f docker-compose.yml pull
-          docker compose -f docker-compose.yml up -d
+          # Apply manifest folder
+          envsubst < infrastructure/k8s/manifests/build-master.yaml | kubectl apply -f -
+          envsubst < infrastructure/k8s/manifests/build-worker.yaml | kubectl apply -f -
+          envsubst < infrastructure/k8s/manifests/gateway.yaml | kubectl apply -f -
+          envsubst < infrastructure/k8s/manifests/lambda-service.yaml | kubectl apply -f -
+          kubectl apply -f infrastructure/k8s/manifests/namespace.yaml
+          kubectl apply -f infrastructure/k8s/manifests/configmap.yaml
+          kubectl apply -f infrastructure/k8s/manifests/secrets.yaml
+          kubectl apply -f infrastructure/k8s/manifests/postgres.yaml
+          kubectl apply -f infrastructure/k8s/manifests/rabbitmq.yaml
+          kubectl apply -f infrastructure/k8s/manifests/redis.yaml
+          kubectl apply -f infrastructure/k8s/manifests/minio.yaml
+          kubectl apply -f infrastructure/k8s/manifests/observability/
+
+          # Always rollout restart the application deployments to pull latest if tags didn't change
+          kubectl rollout restart deployment gateway build-master build-worker lambda-service -n mini-lambda
+
           docker image prune -f
