@@ -5,7 +5,6 @@ networks:
     driver: bridge
 
 volumes:
-  postgres-data:
   redis-data:
   minio-data:
   rabbitmq-data:
@@ -14,25 +13,6 @@ volumes:
   grafana-data:
 
 services:
-  # Infrastructure
-  postgres:
-    image: postgres:15.5-alpine
-    container_name: mini-lambda-postgres
-    restart: always
-    environment:
-      POSTGRES_DB: mini_lambda
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - mini-lambda
-
   redis:
     image: redis:7.2-alpine
     container_name: mini-lambda-redis
@@ -89,11 +69,8 @@ services:
       - ./migrations:/migrations
     command:
       - -path=/migrations
-      - -database=postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/mini_lambda?sslmode=disable
+      - -database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-mini_lambda}?sslmode=${POSTGRES_SSLMODE:-disable}
       - up
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - mini-lambda
 
@@ -107,15 +84,18 @@ services:
     environment:
       SERVICE_NAME: gateway
       LOG_LEVEL: info
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-mini_lambda}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
       REDIS_ADDR: redis:6379
       BUILD_SERVICE_URL: http://build-master:8082
       LAMBDA_SERVICE_URL: http://lambda-service:8081
     depends_on:
       db-migrator:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
@@ -133,7 +113,12 @@ services:
     environment:
       SERVICE_NAME: build-master
       LOG_LEVEL: info
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-mini_lambda}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
@@ -141,8 +126,6 @@ services:
     depends_on:
       db-migrator:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       minio:
@@ -161,7 +144,12 @@ services:
     environment:
       SERVICE_NAME: build-worker
       LOG_LEVEL: info
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-mini_lambda}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
       S3_ENDPOINT: http://minio:9000
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -187,7 +175,12 @@ services:
     environment:
       SERVICE_NAME: lambda-service
       LOG_LEVEL: info
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-mini_lambda}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
       REDIS_ADDR: redis:6379
       S3_ENDPOINT: http://minio:9000
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -196,8 +189,6 @@ services:
     depends_on:
       db-migrator:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       minio:
