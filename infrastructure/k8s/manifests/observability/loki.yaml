@@ -66,6 +66,8 @@ data:
       max_chunk_age: 1h
       chunk_target_size: 1048576
       chunk_retain_period: 30s
+      wal:
+        dir: /loki/wal
     schema_config:
       configs:
         - from: 2020-10-24
