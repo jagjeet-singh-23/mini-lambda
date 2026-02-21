@@ -12,7 +12,7 @@ spec:
         - name: migrator
           image: ghcr.io/${GITHUB_USER}/db-migrator:latest
           imagePullPolicy: IfNotPresent
-          command:
+          args:
             - -path=/migrations
             - -database=postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/$(POSTGRES_DB)?sslmode=disable
             - up
