@@ -121,6 +121,8 @@ services:
   build-worker:
     image: ghcr.io/${GITHUB_USER}/build-worker:latest
     restart: always
+    group_add:
+      - "984"
     environment:
       SERVICE_NAME: build-worker
       LOG_LEVEL: info
@@ -150,6 +152,8 @@ services:
     image: ghcr.io/${GITHUB_USER}/lambda-service:latest
     container_name: mini-lambda-lambda-service
     restart: always
+    group_add:
+      - "984"
     environment:
       SERVICE_NAME: lambda-service
       LOG_LEVEL: info
