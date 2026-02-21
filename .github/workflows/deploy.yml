@@ -77,7 +77,10 @@ jobs:
       - name: Deploy
         run: |
           cd ~/apps/mini-lambda
+          git fetch origin
+          git checkout stage
           git pull origin stage
+          export GITHUB_USER=${{ github.repository_owner }}
           docker compose -f docker-compose.yml pull
           docker compose -f docker-compose.yml up -d
           docker image prune -f
