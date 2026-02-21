@@ -105,6 +105,9 @@ jobs:
           envsubst < infrastructure/k8s/manifests/build-worker.yaml | kubectl apply -f -
           envsubst < infrastructure/k8s/manifests/gateway.yaml | kubectl apply -f -
           envsubst < infrastructure/k8s/manifests/lambda-service.yaml | kubectl apply -f -
+          
+          # Delete any previous migration job to ensure it runs on every deploy
+          kubectl delete job db-migrator-job -n mini-lambda --ignore-not-found
           envsubst < infrastructure/k8s/manifests/db-migrator.yaml | kubectl apply -f -
           
           kubectl apply -f infrastructure/k8s/manifests/configmap.yaml
