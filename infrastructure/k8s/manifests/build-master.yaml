@@ -17,7 +17,7 @@ spec:
       containers:
         - name: build-master
           image: ghcr.io/${GITHUB_USER}/build-master:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8082
           envFrom:
