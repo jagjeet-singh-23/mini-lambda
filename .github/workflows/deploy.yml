@@ -92,8 +92,8 @@ jobs:
           git fetch origin
           git checkout stage
           git pull origin stage
-          # Ensure Kind cluster exists (we check if kubectl can reach it)
-          if ! kubectl cluster-info --context kind-kind > /dev/null 2>&1; then
+          # Ensure Kind cluster exists
+          if ! kind get clusters | grep -q "^kind$"; then
             kind create cluster --config infrastructure/k8s/kind-config.yaml
           fi
 
@@ -115,7 +115,8 @@ jobs:
           kubectl apply -f infrastructure/k8s/manifests/secrets.yaml
           kubectl apply -f infrastructure/k8s/manifests/postgres.yaml
           kubectl apply -f infrastructure/k8s/manifests/rabbitmq.yaml
-          kubectl apply -f infrastructure/k8s/manifests/redis.yaml
+          kubectl apply -f infrastructure/k8s/manifests/redis-cache.yaml
+          kubectl apply -f infrastructure/k8s/manifests/redis-ratelimit.yaml
           kubectl apply -f infrastructure/k8s/manifests/minio.yaml
           kubectl apply -f infrastructure/k8s/manifests/observability/
 
