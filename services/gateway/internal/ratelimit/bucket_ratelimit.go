@@ -76,7 +76,11 @@ func (b *BuildRateLimiter) checkLimit(ctx context.Context, key string, limit int
 		redis.call("EXPIRE", key, window)
 	end
 
-	return current <= limit
+	if current <= limit then
+		return 1
+	else
+		return 0
+	end
 	`
 
 	result, err := b.redis.Eval(ctx, script, []string{key}, limit, int(window.Seconds())).Result()
@@ -84,7 +88,11 @@ func (b *BuildRateLimiter) checkLimit(ctx context.Context, key string, limit int
 		return false, err
 	}
 
-	return result.(bool), nil
+	if val, ok := result.(int64); ok {
+		return val == 1, nil
+	}
+
+	return false, fmt.Errorf("unexpected return type from redis script: %T", result)
 }
 
 // GetRemainingQuota returns the remaining quota for a user
