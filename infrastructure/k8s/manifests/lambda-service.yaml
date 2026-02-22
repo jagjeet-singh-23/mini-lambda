@@ -47,7 +47,7 @@ spec:
       containers:
         - name: lambda-service
           image: ghcr.io/${GITHUB_USER}/lambda-service:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8081
           envFrom:

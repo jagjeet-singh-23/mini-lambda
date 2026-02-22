@@ -17,7 +17,7 @@ spec:
       containers:
         - name: build-worker
           image: ghcr.io/${GITHUB_USER}/build-worker:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: mini-lambda-config
