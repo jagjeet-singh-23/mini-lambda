@@ -84,10 +84,10 @@ const (
 func DefaultPoolConfig(runtime string) PoolConfig {
 	return PoolConfig{
 		Runtime:         runtime,
-		MinSize:         2,
-		MaxSize:         10,
-		MaxIdleTime:     5 * time.Minute,
-		MaxUseCount:     100,
+		MinSize:         10,
+		MaxSize:         50,
+		MaxIdleTime:     2 * time.Minute,
+		MaxUseCount:     500,
 		CleanupStrategy: CleanupStandard,
 	}
 }

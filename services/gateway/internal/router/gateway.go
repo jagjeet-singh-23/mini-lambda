@@ -23,14 +23,14 @@ type ServiceConfig struct {
 
 // Gateway handles routing and rate limiting
 type Gateway struct {
-	config         ServiceConfig
-	rateLimiter    *ratelimit.TokenBucketLimiter
-	circuitBreaker *circuitbreaker.CircuitBreaker
-	httpClient     *http.Client
+	config      ServiceConfig
+	rateLimiter *ratelimit.TokenBucketLimiter
+	cbRegistry  *circuitbreaker.Registry
+	httpClient  *http.Client
 }
 
 // NewGateway creates a new API gateway
-func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter, cb *circuitbreaker.CircuitBreaker) *Gateway {
+func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter, cbRegistry *circuitbreaker.Registry) *Gateway {
 	// Custom transport for high throughput testing
 	transport := &http.Transport{
 		MaxIdleConns:        1000,
@@ -40,9 +40,9 @@ func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter,
 	}
 
 	return &Gateway{
-		config:         config,
-		rateLimiter:    rateLimiter,
-		circuitBreaker: cb,
+		config:      config,
+		rateLimiter: rateLimiter,
+		cbRegistry:  cbRegistry,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   config.Timeout,
@@ -83,7 +83,7 @@ func (g *Gateway) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Forward to lambda-service
-	g.forwardRequest(w, r, g.config.LambdaServiceURL+"/invoke")
+	g.forwardRequest(w, r, g.config.LambdaServiceURL+"/invoke", "lambda-service")
 }
 
 // HandleCreateFunction routes function creation to build-service
@@ -94,7 +94,7 @@ func (g *Gateway) HandleCreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Forward to build-service
-	g.forwardRequest(w, r, g.config.BuildServiceURL+"/functions")
+	g.forwardRequest(w, r, g.config.BuildServiceURL+"/functions", "build-service")
 }
 
 // HandleGetFunction routes function retrieval to lambda-service
@@ -113,7 +113,7 @@ func (g *Gateway) HandleGetFunction(w http.ResponseWriter, r *http.Request) {
 
 	// Forward to lambda-service
 	url := fmt.Sprintf("%s/functions?id=%s", g.config.LambdaServiceURL, functionID)
-	g.forwardRequest(w, r, url)
+	g.forwardRequest(w, r, url, "lambda-service")
 }
 
 // HandleListFunctions routes function listing to lambda-service
@@ -124,7 +124,7 @@ func (g *Gateway) HandleListFunctions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Forward to lambda-service
-	g.forwardRequest(w, r, g.config.LambdaServiceURL+"/functions")
+	g.forwardRequest(w, r, g.config.LambdaServiceURL+"/functions", "lambda-service")
 }
 
 // HandleHealth performs health checks on downstream services
@@ -145,7 +145,7 @@ func (g *Gateway) HandleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // forwardRequest forwards HTTP request to downstream service
-func (g *Gateway) forwardRequest(w http.ResponseWriter, r *http.Request, targetURL string) {
+func (g *Gateway) forwardRequest(w http.ResponseWriter, r *http.Request, targetURL string, serviceName string) {
 	// Read request body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -178,8 +178,15 @@ func (g *Gateway) forwardRequest(w http.ResponseWriter, r *http.Request, targetU
 	req.Header.Set("X-Forwarded-For", r.RemoteAddr)
 
 	// Execute request
+	cb, err := g.cbRegistry.Get(serviceName)
+	if err != nil {
+		logger.Error("Failed to get circuit breaker", "service", serviceName, "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	var resp *http.Response
-	err = g.circuitBreaker.Call(r.Context(), func() error {
+	err = cb.Call(r.Context(), func() error {
 		var reqErr error
 		resp, reqErr = g.httpClient.Do(req)
 		return reqErr
