@@ -58,6 +58,13 @@ spec:
               value: "lambda-service"
             - name: KUBERNETES_SERVICE_HOST
               value: "kubernetes.default.svc"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service
