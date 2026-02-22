@@ -23,14 +23,15 @@ type ServiceConfig struct {
 
 // Gateway handles routing and rate limiting
 type Gateway struct {
-	config      ServiceConfig
-	rateLimiter *ratelimit.TokenBucketLimiter
-	cbRegistry  *circuitbreaker.Registry
-	httpClient  *http.Client
+	config        ServiceConfig
+	invokeLimiter ratelimit.RateLimiter
+	buildLimiter  ratelimit.RateLimiter
+	cbRegistry    *circuitbreaker.Registry
+	httpClient    *http.Client
 }
 
 // NewGateway creates a new API gateway
-func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter, cbRegistry *circuitbreaker.Registry) *Gateway {
+func NewGateway(config ServiceConfig, invokeLimiter ratelimit.RateLimiter, buildLimiter ratelimit.RateLimiter, cbRegistry *circuitbreaker.Registry) *Gateway {
 	// Custom transport for high throughput testing
 	transport := &http.Transport{
 		MaxIdleConns:        1000,
@@ -40,9 +41,10 @@ func NewGateway(config ServiceConfig, rateLimiter *ratelimit.TokenBucketLimiter,
 	}
 
 	return &Gateway{
-		config:      config,
-		rateLimiter: rateLimiter,
-		cbRegistry:  cbRegistry,
+		config:        config,
+		invokeLimiter: invokeLimiter,
+		buildLimiter:  buildLimiter,
+		cbRegistry:    cbRegistry,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   config.Timeout,
@@ -68,8 +70,8 @@ func (g *Gateway) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate limiting per function
-	allowed, err := g.rateLimiter.Allow(r.Context(), req.FunctionID)
+	// Rate limiting per function (Invoke Strategy)
+	allowed, err := g.invokeLimiter.Allow(r.Context(), req.FunctionID)
 	if err != nil {
 		logger.Error("Rate limiter error", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -90,6 +92,25 @@ func (g *Gateway) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) HandleCreateFunction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Rate limiting per user for building functions (Build Strategy)
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID = "default_user"
+	}
+
+	allowed, err := g.buildLimiter.Allow(r.Context(), userID)
+	if err != nil {
+		logger.Error("Build rate limiter error", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !allowed {
+		w.Header().Set("X-RateLimit-Retry-After", "60")
+		http.Error(w, "Build rate limit exceeded. Max 5 per minute per user.", http.StatusTooManyRequests)
 		return
 	}
 
@@ -175,7 +196,6 @@ func (g *Gateway) forwardRequest(w http.ResponseWriter, r *http.Request, targetU
 
 	// Add gateway headers
 	req.Header.Set("X-Forwarded-By", "mini-lambda-gateway")
-	req.Header.Set("X-Forwarded-For", r.RemoteAddr)
 
 	// Execute request
 	cb, err := g.cbRegistry.Get(serviceName)

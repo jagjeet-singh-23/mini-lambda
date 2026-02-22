@@ -3,9 +3,12 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/time/rate"
 )
 
 // TokenBucketLimiter implements token bucket algorithm using Redis
@@ -14,6 +17,9 @@ type TokenBucketLimiter struct {
 	capacity     int64         // Maximum tokens in bucket
 	refillRate   int64         // Tokens added per second
 	refillPeriod time.Duration // How often to refill
+
+	fallbackMu  sync.RWMutex
+	fallbackMap map[string]*rate.Limiter
 }
 
 // NewTokenBucketLimiter creates a new token bucket rate limiter
@@ -29,7 +35,7 @@ func NewTokenBucketLimiter(redisAddr string, capacity, refillRate int64) (*Token
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+		logger.Error("Failed to connect to Redis for Rate Limiter, will use in-memory fallback", "error", err)
 	}
 
 	return &TokenBucketLimiter{
@@ -37,10 +43,11 @@ func NewTokenBucketLimiter(redisAddr string, capacity, refillRate int64) (*Token
 		capacity:     capacity,
 		refillRate:   refillRate,
 		refillPeriod: time.Second,
+		fallbackMap:  make(map[string]*rate.Limiter),
 	}, nil
 }
 
-// Allow checks if a request is allowed for the given key (e.g., function ID)
+// Allow checks if a request is allowed for the given key
 // Returns true if allowed, false if rate limited
 func (tb *TokenBucketLimiter) Allow(ctx context.Context, key string) (bool, error) {
 	bucketKey := fmt.Sprintf("ratelimit:bucket:%s", key)
@@ -99,10 +106,31 @@ func (tb *TokenBucketLimiter) Allow(ctx context.Context, key string) (bool, erro
 	).Int()
 
 	if err != nil {
-		return false, fmt.Errorf("rate limit check failed: %w", err)
+		logger.Error("Redis rate limit check failed, using in-memory fallback", "key", key, "error", err)
+		return tb.allowFallback(key), nil
 	}
 
 	return result == 1, nil
+}
+
+// allowFallback provides in-memory rate limiting when Redis is unavailable
+func (tb *TokenBucketLimiter) allowFallback(key string) bool {
+	tb.fallbackMu.RLock()
+	limiter, exists := tb.fallbackMap[key]
+	tb.fallbackMu.RUnlock()
+
+	if !exists {
+		tb.fallbackMu.Lock()
+		limiter, exists = tb.fallbackMap[key]
+		if !exists {
+			// Limit is refillRate per second, burst is capacity
+			limiter = rate.NewLimiter(rate.Limit(tb.refillRate), int(tb.capacity))
+			tb.fallbackMap[key] = limiter
+		}
+		tb.fallbackMu.Unlock()
+	}
+
+	return limiter.Allow()
 }
 
 // GetTokens returns the current number of tokens available for a key
@@ -160,11 +188,4 @@ func (tb *TokenBucketLimiter) Reset(ctx context.Context, key string) error {
 // Close closes the Redis connection
 func (tb *TokenBucketLimiter) Close() error {
 	return tb.client.Close()
-}
-
-func min(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
 }
