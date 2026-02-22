@@ -11,10 +11,21 @@ volumes:
   grafana-data:
 
 services:
-  redis:
+  redis-cache:
     image: redis:7.2-alpine
-    container_name: mini-lambda-redis
-    restart: always
+    container_name: mini-lambda-redis-cache
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - mini-lambda
+
+  redis-ratelimit:
+    image: redis:7.2-alpine
+    container_name: mini-lambda-redis-ratelimit
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
     volumes:
       - redis-data:/data
     healthcheck:

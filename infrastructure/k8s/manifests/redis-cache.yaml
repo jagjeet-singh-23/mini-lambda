@@ -1,17 +1,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis
+  name: redis-cache
   namespace: mini-lambda
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: redis
+      app: redis-cache
   template:
     metadata:
       labels:
-        app: redis
+        app: redis-cache
     spec:
       containers:
         - name: redis
@@ -22,10 +22,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis
+  name: redis-cache
   namespace: mini-lambda
 spec:
   ports:
     - port: 6379
   selector:
-    app: redis
+    app: redis-cache

@@ -104,6 +104,7 @@ Because this runs inside `kind`, we've exposed specific NodePorts to your local 
 - **MinIO API/S3 Endpoint**: `http://localhost:9000` (Port 30090 -> 9000)
 - **MinIO Console (UI)**: `http://localhost:9001` (Port 30091 -> 9001, Login: minioadmin/minioadmin)
 - **Grafana Dashboards**: `http://localhost:3000` (Port 30000 -> 3000, Login: admin/admin)
+- **Redis Rate Limiter**: `localhost:6380` (Port 30380 -> 6380)
 
 To verify the endpoints, run:
 

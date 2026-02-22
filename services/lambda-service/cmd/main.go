@@ -184,7 +184,7 @@ func loadConfig() Config {
 		S3SecretKey:  getEnv("S3_SECRET_KEY", "minioadmin"),
 		S3Bucket:     getEnv("S3_BUCKET", "lambda-functions"),
 		RabbitMQURL:  getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
-		RedisAddr:    getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisAddr:    getEnv("REDIS_CACHE_ADDR", "localhost:6379"),
 	}
 }
 
