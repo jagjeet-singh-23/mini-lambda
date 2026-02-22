@@ -38,11 +38,12 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    container_name: mini-lambda-redis
+  redis-cache:
+    image: redis:7.2-alpine
+    container_name: mini-lambda-redis-cache
+    restart: unless-stopped
     volumes:
-      - redis-data:/data
+      - redis-cache-data:/data
     ports:
       - "6379:6379"
     networks:
