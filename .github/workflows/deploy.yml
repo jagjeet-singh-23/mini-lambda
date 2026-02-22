@@ -92,9 +92,14 @@ jobs:
           git fetch origin
           git checkout stage
           git pull origin stage
-          # Ensure Kind cluster exists
-          if ! kind get clusters | grep -q "^kind$"; then
+          # Ensure Kind cluster is healthy, otherwise recreate it
+          export KUBECONFIG=~/.kube/config
+          if ! kubectl cluster-info --context kind-kind > /dev/null 2>&1; then
+            echo "Cluster is missing or unresponsive. Recreating..."
+            kind delete cluster || true
             kind create cluster --config infrastructure/k8s/kind-config.yaml
+            sleep 10
+            kubectl wait --for=condition=Ready nodes --all --timeout=60s
           fi
 
           export GITHUB_USER=${{ github.repository_owner }}
