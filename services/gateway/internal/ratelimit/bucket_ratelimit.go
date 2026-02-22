@@ -59,6 +59,11 @@ func (b *BuildRateLimiter) Allow(ctx context.Context, userID string) (bool, stri
 	return true, "", nil
 }
 
+// Close closes the Redis connection (satisfies RateLimiter interface via adapter)
+func (b *BuildRateLimiter) Close() error {
+	return b.redis.Close()
+}
+
 // checkLimit checks if the given key is within the rate limit
 func (b *BuildRateLimiter) checkLimit(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
 	script := `
