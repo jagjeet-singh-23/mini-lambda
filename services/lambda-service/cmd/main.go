@@ -164,6 +164,7 @@ type Config struct {
 	PostgresUser string
 	PostgresPass string
 	PostgresDB   string
+	PostgresSSL  string
 	S3Endpoint   string
 	S3AccessKey  string
 	S3SecretKey  string
@@ -179,6 +180,7 @@ func loadConfig() Config {
 		PostgresUser: getEnv("POSTGRES_USER", "postgres"),
 		PostgresPass: getEnv("POSTGRES_PASSWORD", "postgres"),
 		PostgresDB:   getEnv("POSTGRES_DB", "lambda_service_db"),
+		PostgresSSL:  getEnv("POSTGRES_SSLMODE", "disable"),
 		S3Endpoint:   getEnv("S3_ENDPOINT", "http://localhost:9000"),
 		S3AccessKey:  getEnv("S3_ACCESS_KEY", "minioadmin"),
 		S3SecretKey:  getEnv("S3_SECRET_KEY", "minioadmin"),
@@ -190,12 +192,13 @@ func loadConfig() Config {
 
 func initDatabase(config Config) (*sql.DB, error) {
 	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		config.PostgresHost,
 		config.PostgresPort,
 		config.PostgresUser,
 		config.PostgresPass,
 		config.PostgresDB,
+		config.PostgresSSL,
 	)
 
 	db, err := sql.Open("postgres", dsn)

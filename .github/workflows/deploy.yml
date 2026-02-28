@@ -3,7 +3,7 @@ name: CD
 on:
   push:
     branches:
-      - stage
+      - feature/aws-migration-phase7
 
 env:
   REGISTRY: ghcr.io
