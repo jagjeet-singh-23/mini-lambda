@@ -37,8 +37,16 @@ func main() {
 	// Initialize circuit breaker registry
 	cbRegistry := setupCircuitBreakers()
 
+	// Initialize Redis stream client
+	redisStreamAddr := getEnv("REDIS_CACHE_ADDR", "localhost:6379")
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisStreamAddr,
+	})
+	defer redisClient.Close()
+	log.Printf("✅ Redis streaming client initialized")
+
 	// Initialize gateway
-	gateway := router.NewGateway(config, invokeLimiter, buildAdapter, cbRegistry)
+	gateway := router.NewGateway(config, invokeLimiter, buildAdapter, cbRegistry, redisClient)
 
 	// Setup HTTP routes
 	mux := gateway.SetupRoutes()

@@ -178,6 +178,11 @@ func (p *KubernetesPodPool) Size() int {
 	return len(p.containers)
 }
 
+// GetClient returns the underlying Kubernetes clientset
+func (p *KubernetesPodPool) GetClient() kubernetes.Interface {
+	return p.client
+}
+
 func (p *KubernetesPodPool) Stats() domain.PoolStats {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

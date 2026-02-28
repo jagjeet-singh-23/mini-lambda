@@ -12,6 +12,7 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/circuitbreaker"
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/ratelimit"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
+	"github.com/redis/go-redis/v9"
 )
 
 // ServiceConfig holds configuration for downstream services
@@ -28,10 +29,11 @@ type Gateway struct {
 	buildLimiter  ratelimit.RateLimiter
 	cbRegistry    *circuitbreaker.Registry
 	httpClient    *http.Client
+	redisClient   *redis.Client
 }
 
 // NewGateway creates a new API gateway
-func NewGateway(config ServiceConfig, invokeLimiter ratelimit.RateLimiter, buildLimiter ratelimit.RateLimiter, cbRegistry *circuitbreaker.Registry) *Gateway {
+func NewGateway(config ServiceConfig, invokeLimiter ratelimit.RateLimiter, buildLimiter ratelimit.RateLimiter, cbRegistry *circuitbreaker.Registry, redisClient *redis.Client) *Gateway {
 	// Custom transport for high throughput testing
 	transport := &http.Transport{
 		MaxIdleConns:        1000,
@@ -49,6 +51,7 @@ func NewGateway(config ServiceConfig, invokeLimiter ratelimit.RateLimiter, build
 			Transport: transport,
 			Timeout:   config.Timeout,
 		},
+		redisClient: redisClient,
 	}
 }
 

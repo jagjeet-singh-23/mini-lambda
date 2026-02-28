@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/storage"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
 )
@@ -20,12 +21,16 @@ type Manager struct {
 
 	// metricsCollector collects Prometheus metrics
 	metricsCollector *metrics.MetricsCollector
+
+	// s3Storage is used to dynamically check for ECR Image URIs
+	s3Storage *storage.S3Storage
 }
 
-func NewManager() (*Manager, error) {
+func NewManager(s3Storage *storage.S3Storage) (*Manager, error) {
 	m := &Manager{
 		runtimes:         make(map[string]domain.Runtime),
 		metricsCollector: metrics.NewMetricsCollector(),
+		s3Storage:        s3Storage,
 	}
 
 	if err := m.registerDefaultRuntimes(); err != nil {
@@ -58,6 +63,7 @@ func (m *Manager) registerDefaultRuntimes() error {
 				config.runtimeType,
 				config.baseImage,
 				m.metricsCollector,
+				m.s3Storage,
 			)
 		} else {
 			runtime, err = NewDockerRuntime(

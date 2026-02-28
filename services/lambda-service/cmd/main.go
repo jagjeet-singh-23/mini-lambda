@@ -68,7 +68,7 @@ func main() {
 	dlqRepo := storage.NewPostgresDeadLetterQueue(db)
 
 	// Initialize runtime/executor
-	runtimeManager, err := executor.NewManager()
+	runtimeManager, err := executor.NewManager(s3Storage)
 	if err != nil {
 		log.Fatalf("Failed to initialize runtime manager: %v", err)
 	}
