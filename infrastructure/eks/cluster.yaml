@@ -1,0 +1,57 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: mini-lambda-prod
+  region: ap-south-1
+  version: "1.30"
+  tags:
+    Project: Mini-Lambda
+    Environment: Production
+
+availabilityZones: ["ap-south-1a", "ap-south-1b", "ap-south-1c"]
+
+iam:
+  withOIDC: true
+  serviceAccounts:
+    - metadata:
+        name: aws-load-balancer-controller
+        namespace: kube-system
+      wellKnownPolicies:
+        awsLoadBalancerController: true
+
+    - metadata:
+        name: build-worker
+        namespace: mini-lambda
+      attachPolicyARNs:
+        - "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+
+    - metadata:
+        name: build-master
+        namespace: mini-lambda
+      attachPolicyARNs:
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+
+    - metadata:
+        name: lambda-service
+        namespace: mini-lambda
+      attachPolicyARNs:
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+
+managedNodeGroups:
+  - name: standard-nodes
+    instanceType: c6a.2xlarge
+    minSize: 4
+    maxSize: 10
+    desiredCapacity: 4
+    volumeSize: 50
+
+    labels:
+      role: worker
+    tags:
+      NodeType: standard
+    iam:
+      withAddonPolicies:
+        autoScaler: true
+        cloudWatch: true
