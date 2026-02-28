@@ -90,8 +90,8 @@ jobs:
         run: |
           cd ~/apps/mini-lambda
           git fetch origin
-          git checkout stage
-          git pull origin stage
+          git checkout feature/aws-migration-phase7
+          git pull origin feature/aws-migration-phase7
           # Ensure Kind cluster is healthy, otherwise recreate it
           export KUBECONFIG=~/.kube/config
           if ! kubectl cluster-info --context kind-kind > /dev/null 2>&1; then
