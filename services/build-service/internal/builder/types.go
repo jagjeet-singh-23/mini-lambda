@@ -10,6 +10,8 @@ type BuildJob struct {
 	FunctionID  string     `json:"function_id"`
 	Runtime     string     `json:"runtime"`
 	PackageURL  string     `json:"package_url"`
+	RepoURL     string     `json:"repo_url,omitempty"`
+	Dockerfile  string     `json:"dockerfile,omitempty"`
 	WebhookURL  string     `json:"webhook_url"`
 	Status      string     `json:"status"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -33,8 +35,10 @@ type CreateFunctionRequest struct {
 	Name        string `json:"name"`
 	Runtime     string `json:"runtime"`
 	Handler     string `json:"handler"`
-	PackageData []byte `json:"package_data"` // Base64 encoded ZIP
-	WebhookURL  string `json:"webhook_url"`  // Client-provided webhook for status updates
+	PackageData []byte `json:"package_data"`       // Base64 encoded ZIP (optional if RepoURL is given)
+	RepoURL     string `json:"repo_url,omitempty"` // GitHub repo URL for Docker containerization
+	Dockerfile  string `json:"dockerfile,omitempty"` // Path to Dockerfile inside repo
+	WebhookURL  string `json:"webhook_url"`        // Client-provided webhook for status updates
 	Timeout     int    `json:"timeout"`
 	Memory      int    `json:"memory"`
 }

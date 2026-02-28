@@ -205,6 +205,25 @@ func (s *S3Storage) Retrieve(ctx context.Context, key string) ([]byte, error) {
 	return code, nil
 }
 
+// RetrieveRaw fetches an object from S3 without performing any hash/integrity checks.
+func (s *S3Storage) RetrieveRaw(ctx context.Context, key string) ([]byte, error) {
+	if key == "" {
+		return nil, fmt.Errorf("key cannot be empty")
+	}
+
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve raw from S3: %w", err)
+	}
+	defer result.Body.Close()
+
+	return io.ReadAll(result.Body)
+}
+
 func (s *S3Storage) Delete(ctx context.Context, key string) error {
 	if key == "" {
 		return fmt.Errorf("key cannot be empty")

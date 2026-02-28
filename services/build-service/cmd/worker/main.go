@@ -17,6 +17,7 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -59,8 +60,19 @@ func main() {
 
 	log.Println("✅ S3 storage initialized")
 
+	// Initialize Redis for Streaming
+	redisAddr := getEnv("REDIS_CACHE_ADDR", "localhost:6379")
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	log.Println("✅ Redis streaming client initialized")
+
 	// Initialize ZIP processor
 	zipProcessor := builder.NewZIPProcessor(workDir)
+
+	// Initialize Docker builder
+	ecrRepo := getEnv("ECR_REGISTRY_URL", "") // e.g. 123456.dkr.ecr.us-east-1.amazonaws.com/mini-lambda
+	dockerBuilder := builder.NewDockerBuilder(workDir, ecrRepo, redisClient)
 
 	// Initialize webhook notifier
 	webhookNotifier := builder.NewWebhookNotifier()
@@ -82,7 +94,7 @@ func main() {
 
 	// Start consuming build jobs
 	err = consumer.Consume("build-jobs", func(body []byte) error {
-		return processBuildJob(ctx, body, s3Storage, zipProcessor, webhookNotifier)
+		return processBuildJob(ctx, body, s3Storage, zipProcessor, dockerBuilder, webhookNotifier)
 	})
 
 	if err != nil {
@@ -97,6 +109,7 @@ func processBuildJob(
 	body []byte,
 	s3Storage *storage.S3Storage,
 	zipProcessor *builder.ZIPProcessor,
+	dockerBuilder *builder.DockerBuilder,
 	webhookNotifier *builder.WebhookNotifier,
 ) error {
 	// Parse build job
@@ -122,30 +135,51 @@ func processBuildJob(
 		logger.Error("Failed to send building webhook", "error", err)
 	}
 
-	// Download package from S3
-	logger.Info("Downloading package from S3", "key", job.PackageURL)
-	packageData, err := s3Storage.DownloadPackage(ctx, job.PackageURL)
-	if err != nil {
-		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to download package: %v", err), startTime)
-	}
+	// Branch Logic: Native Docker Build vs. Legacy Zip Extraction
+	if job.RepoURL != "" {
+		logger.Info("Starting GitHub Docker build", "function_id", job.FunctionID, "repo", job.RepoURL)
 
-	// Validate package
-	if err := zipProcessor.ValidatePackage(packageData); err != nil {
-		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Invalid package: %v", err), startTime)
-	}
+		imageURI, err := dockerBuilder.CloneAndBuild(ctx, job.ID, job.FunctionID, job.RepoURL, job.Dockerfile)
+		if err != nil {
+			return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Docker build failed: %v", err), startTime)
+		}
 
-	// Process ZIP package
-	logger.Info("Extracting ZIP package", "function_id", job.FunctionID)
-	extractedDir, err := zipProcessor.Process(ctx, packageData, job.FunctionID)
-	if err != nil {
-		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to process package: %v", err), startTime)
-	}
-	defer zipProcessor.Cleanup(job.FunctionID)
+		// Save the ECR Image URI to S3 so lambda-service knows what to pull
+		_, err = s3Storage.UploadPackage(ctx, job.FunctionID+"_imageuri", []byte(imageURI))
+		if err != nil {
+			return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to save image URI metadata: %v", err), startTime)
+		}
 
-	// Upload extracted files to S3
-	logger.Info("Uploading extracted files to S3", "function_id", job.FunctionID)
-	if err := s3Storage.UploadDirectory(ctx, job.FunctionID, extractedDir); err != nil {
-		return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to upload artifacts: %v", err), startTime)
+		logger.Info("GitHub Docker build completed", "image_uri", imageURI)
+
+	} else {
+		logger.Info("Starting legacy S3 Zip extraction", "function_id", job.FunctionID)
+
+		// Download package from S3
+		logger.Info("Downloading package from S3", "key", job.PackageURL)
+		packageData, err := s3Storage.DownloadPackage(ctx, job.PackageURL)
+		if err != nil {
+			return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to download package: %v", err), startTime)
+		}
+
+		// Validate package
+		if err := zipProcessor.ValidatePackage(packageData); err != nil {
+			return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Invalid package: %v", err), startTime)
+		}
+
+		// Process ZIP package
+		logger.Info("Extracting ZIP package", "function_id", job.FunctionID)
+		extractedDir, err := zipProcessor.Process(ctx, packageData, job.FunctionID)
+		if err != nil {
+			return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to process package: %v", err), startTime)
+		}
+		defer zipProcessor.Cleanup(job.FunctionID)
+
+		// Upload extracted files to S3
+		logger.Info("Uploading extracted files to S3", "function_id", job.FunctionID)
+		if err := s3Storage.UploadDirectory(ctx, job.FunctionID, extractedDir); err != nil {
+			return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to upload artifacts: %v", err), startTime)
+		}
 	}
 
 	// Mark as completed

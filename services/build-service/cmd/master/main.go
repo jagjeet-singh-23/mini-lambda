@@ -152,13 +152,18 @@ func handleCreateFunction(
 	}
 
 	// Validate request
-	if req.Name == "" || req.Runtime == "" || len(req.PackageData) == 0 {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
+	if req.Name == "" || req.Runtime == "" || (len(req.PackageData) == 0 && req.RepoURL == "") {
+		http.Error(w, "Missing required fields: Name, Runtime, and either PackageData or RepoURL", http.StatusBadRequest)
 		return
 	}
 
-	// Generate Idempotency Key (SHA256 of Name + Runtime + Package content)
-	hashInput := fmt.Sprintf("%s:%s:%s", req.Name, req.Runtime, string(req.PackageData))
+	// Generate Idempotency Key (SHA256 of Name + Runtime + Package content or RepoURL)
+	var hashInput string
+	if len(req.PackageData) > 0 {
+		hashInput = fmt.Sprintf("%s:%s:%s", req.Name, req.Runtime, string(req.PackageData))
+	} else {
+		hashInput = fmt.Sprintf("%s:%s:%s:%s", req.Name, req.Runtime, req.RepoURL, req.Dockerfile)
+	}
 	hasher := sha256.New()
 	hasher.Write([]byte(hashInput))
 	requestHash := hex.EncodeToString(hasher.Sum(nil))
@@ -196,12 +201,16 @@ func handleCreateFunction(
 		"runtime", req.Runtime,
 	)
 
-	// Upload package to S3
-	packageKey, err := s3Storage.UploadPackage(ctx, functionID.String(), req.PackageData)
-	if err != nil {
-		logger.Error("Failed to upload package", "error", err)
-		http.Error(w, "Failed to upload package", http.StatusInternalServerError)
-		return
+	// Upload package to S3 (only if PackageData is provided)
+	var packageKey string
+	if len(req.PackageData) > 0 {
+		var err error
+		packageKey, err = s3Storage.UploadPackage(ctx, functionID.String(), req.PackageData)
+		if err != nil {
+			logger.Error("Failed to upload package", "error", err)
+			http.Error(w, "Failed to upload package", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Create build job
@@ -210,6 +219,8 @@ func handleCreateFunction(
 		FunctionID: functionID.String(),
 		Runtime:    req.Runtime,
 		PackageURL: packageKey,
+		RepoURL:    req.RepoURL,
+		Dockerfile: req.Dockerfile,
 		WebhookURL: req.WebhookURL,
 		Status:     string(builder.StatusQueued),
 		CreatedAt:  time.Now(),

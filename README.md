@@ -98,4 +98,16 @@ curl -X POST http://localhost:8080/invoke \
   }'
 ```
 
+## 🗺 Production Roadmap (1M+ Users)
+
+To scale this proof-of-concept into a global, production-ready system capable of handling millions of users, the following architectural evolutions are planned:
+
+1. **EKS & Multi-AZ Deployment:** Migrate from local `Kind` to **AWS EKS** (Elastic Kubernetes Service) across multiple Availability Zones (AZs) fronted by an **AWS Application Load Balancer (ALB)**.
+2. **KEDA for Asynchronous Scaling:** Implement [KEDA](https://keda.sh/) (Kubernetes Event-driven Autoscaling) to scale the `build-worker` pods directly based on the depth of the **RabbitMQ** build queue, rather than purely CPU/Memory.
+3. **Containerized Function Images (ECR):** Transition from pulling Zip archives from MinIO at runtime to building actual Docker container images for each function and pushing them to **Amazon Elastic Container Registry (ECR)**. The Lambda Service will then dynamically spin up these dedicated containers.
+4. **Redis Clustering:** A single Redis node for the Token Bucket will bottleneck under millions of RPS. We will migrate `redis-ratelimit` and `redis-cache` to a highly available **Redis Cluster** setup.
+5. **Build Service Stress Testing:** The current JMeter test suite focuses on the `/invoke` proxy latency. Future benchmarking will stress-test the `build-master` API and the RabbitMQ queue limits during massive burst function deployments.
+
 ---
+
+_Designed and engineered by [Jagjeet Singh](https://github.com/jagjeet-singh-23)_
