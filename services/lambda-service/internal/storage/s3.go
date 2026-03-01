@@ -88,31 +88,7 @@ func NewS3Storage(ctx context.Context, cfg S3Config) (*S3Storage, error) {
 		isMinIO: cfg.Endpoint != "", // MinIO uses custom endpoint, AWS S3 doesn't
 	}
 
-	if err := storage.ensureBucket(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ensure bucket: %w", err)
-	}
-
 	return storage, nil
-}
-
-func (s *S3Storage) ensureBucket(ctx context.Context) error {
-	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
-		Bucket: aws.String(s.bucket),
-	})
-
-	if err == nil {
-		return nil
-	}
-
-	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(s.bucket),
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to create bucket:%w", err)
-	}
-
-	return nil
 }
 
 func (s *S3Storage) Store(

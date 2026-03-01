@@ -14,6 +14,7 @@ spec:
         app: build-worker
     spec:
       enableServiceLinks: false
+      serviceAccountName: build-worker
       containers:
         - name: build-worker
           image: ghcr.io/${GITHUB_USER}/build-worker:latest

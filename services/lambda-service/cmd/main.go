@@ -47,6 +47,7 @@ func main() {
 		context.Background(),
 		storage.S3Config{
 			Endpoint:        config.S3Endpoint,
+			Region:          config.S3Region,
 			AccessKeyID:     config.S3AccessKey,
 			SecretAccessKey: config.S3SecretKey,
 			Bucket:          config.S3Bucket,
@@ -166,6 +167,7 @@ type Config struct {
 	PostgresDB   string
 	PostgresSSL  string
 	S3Endpoint   string
+	S3Region     string
 	S3AccessKey  string
 	S3SecretKey  string
 	S3Bucket     string
@@ -182,11 +184,12 @@ func loadConfig() Config {
 		PostgresDB:   getEnv("POSTGRES_DB", "lambda_service_db"),
 		PostgresSSL:  getEnv("POSTGRES_SSLMODE", "disable"),
 		S3Endpoint:   getEnv("S3_ENDPOINT", ""),
+		S3Region:     getEnv("S3_REGION", "ap-south-1"),
 		S3AccessKey:  getEnv("S3_ACCESS_KEY", ""),
 		S3SecretKey:  getEnv("S3_SECRET_KEY", ""),
-		S3Bucket:     getEnv("S3_BUCKET", "lambda-functions"),
-		RabbitMQURL:  getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
-		RedisAddr:    getEnv("REDIS_CACHE_ADDR", "localhost:6379"),
+		S3Bucket:     getEnv("S3_BUCKET", ""),
+		RabbitMQURL:  getEnv("RABBITMQ_URL", ""),
+		RedisAddr:    getEnv("REDIS_CACHE_ADDR", ""),
 	}
 }
 
