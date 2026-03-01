@@ -36,11 +36,11 @@ func main() {
 
 	// Configuration
 	amqpURL := getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	s3Endpoint := getEnv("S3_ENDPOINT", "http://localhost:9000")
+	s3Endpoint := getEnv("S3_ENDPOINT", "")
 	s3Region := getEnv("S3_REGION", "us-east-1")
 	s3Bucket := getEnv("S3_BUCKET", "mini-lambda")
-	s3AccessKey := getEnv("S3_ACCESS_KEY", "minioadmin")
-	s3SecretKey := getEnv("S3_SECRET_KEY", "minioadmin")
+	s3AccessKey := getEnv("S3_ACCESS_KEY", "")
+	s3SecretKey := getEnv("S3_SECRET_KEY", "")
 	workDir := getEnv("WORK_DIR", "/tmp/build-worker")
 
 	// Initialize RabbitMQ consumer
