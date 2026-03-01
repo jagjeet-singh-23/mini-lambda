@@ -26,16 +26,6 @@ spec:
           env:
             - name: SERVICE_NAME
               value: "build-master"
-            - name: S3_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: mini-lambda-secrets
-                  key: MINIO_ROOT_USER
-            - name: S3_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: mini-lambda-secrets
-                  key: MINIO_ROOT_PASSWORD
 ---
 apiVersion: v1
 kind: Service
