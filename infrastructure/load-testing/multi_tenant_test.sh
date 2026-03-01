@@ -106,5 +106,5 @@ echo "Targeting: $GATEWAY_URL"
 for IP in $WORKER_IPS; do
   echo "--> Executing 25,000 RPS on worker $IP"
   ssh -i ~/.ssh/id_rsa ec2-user@$IP \
-    "GATEWAY_URL=\"$GATEWAY_URL\" FUNCTION_ID_1=\"$FUNC1_ID\" FUNCTION_ID_2=\"$FUNC2_ID\" FUNCTION_ID_3=\"$FUNC3_ID\" TARGET_RPS=20000 k6 run ~/k100_multi_tenant.js > k6_run.stdout 2>&1 &"
+    "nohup env GATEWAY_URL=\"$GATEWAY_URL\" FUNCTION_ID_1=\"$FUNC1_ID\" FUNCTION_ID_2=\"$FUNC2_ID\" FUNCTION_ID_3=\"$FUNC3_ID\" TARGET_RPS=25000 k6 run ~/k100_multi_tenant.js > k6_run.stdout 2>&1 &"
 done
