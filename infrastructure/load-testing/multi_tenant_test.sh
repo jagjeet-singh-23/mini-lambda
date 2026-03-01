@@ -8,16 +8,31 @@ echo "=========================================================="
 echo " 🏭 Phase 10 Load Testing: Multi-Tenant 100K RPS EKS Bench "
 echo "=========================================================="
 
-GATEWAY_URL=$(kubectl get svc gateway -n mini-lambda -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-if [ -z "$GATEWAY_URL" ]; then
-    echo "⚠️  AWS ALB not provisioned yet. Fetching Gateway NodePort for testing..."
-    NODE_IP=$(kubectl get nodes -o wide | awk 'NR==2{print $6}')
-    NODE_PORT=$(kubectl get svc gateway -n mini-lambda -o jsonpath='{.spec.ports[0].nodePort}')
-    GATEWAY_URL="http://${NODE_IP}:${NODE_PORT}"
-else 
-    GATEWAY_URL="http://${GATEWAY_URL}:8080"
-fi
-echo "🔗 Gateway URL: Mapped to $GATEWAY_URL"
+echo "⏳ Waiting for AWS Application Load Balancer to provision (this takes ~2 minutes)..."
+while true; do
+    GATEWAY_URL=$(kubectl get ingress gateway-ingress -n mini-lambda -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+    if [ ! -z "$GATEWAY_URL" ]; then
+        break
+    fi
+    echo -n "."
+    sleep 5
+done
+
+GATEWAY_URL="http://${GATEWAY_URL}"
+echo ""
+echo "🔗 Gateway ALB URL: Mapped to $GATEWAY_URL"
+
+echo ""
+echo "🌍 Waiting for ALB DNS propagation and Node Target registration (this may take 2-3 minutes)..."
+while true; do
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/health" || echo "000")
+    if [ "$STATUS" = "200" ] || [ "$STATUS" = "404" ] || [ "$STATUS" = "405" ]; then
+        echo "✅ ALB is online and responding to traffic!"
+        break
+    fi
+    echo -n "⏳ Waiting... ($STATUS) "
+    sleep 10
+done
 
 echo ""
 echo "📦 [Scenario 2 & 3] Building Multi-Tenant Docker Functions via GitHub..."
@@ -67,20 +82,29 @@ echo ""
 echo "⏳ Sleeping for 90 seconds to allow ECR image compilation..."
 sleep 90
 
-echo ""
-echo "🚀 [Scenario 4 & 5] Launching 100K RPS k6 HTTP Traffic Blast under Rate Limit exclusions..."
-if ! command -v k6 &> /dev/null
-then
-    echo "❌ k6 is not installed. Please install k6: brew install k6"
-    exit 1
-fi
-
-export GATEWAY_URL=$GATEWAY_URL
-export FUNCTION_ID_1=$FUNC1_ID
-export FUNCTION_ID_2=$FUNC2_ID
-export FUNCTION_ID_3=$FUNC3_ID
-
-k6 run $DIR/k100_multi_tenant.js
+echo "🚀 [Scenario 4 & 5] Provisioning 5x c6a.xlarge k6 nodes via Terraform for strictly Distributed Testing..."
+cd $DIR
+terraform init
+terraform apply -auto-approve
 
 echo ""
-echo "✅ Multi-Tenant EKS Load Test Completed!"
+echo "⏳ Waiting 60s for EC2 instances to initialize OS and install k6 via cloud-init..."
+sleep 60
+
+# Fetch IPs from Terraform output (ensure jq is installed)
+WORKER_IPS=$(terraform output -json k6_worker_ips | jq -r '.[]')
+
+echo "📤 Uploading Test Plan to all 5 EC2 worker nodes..."
+for IP in $WORKER_IPS; do
+  ssh-keyscan -H $IP >> ~/.ssh/known_hosts 2>/dev/null
+  scp -i ~/.ssh/id_rsa $DIR/k100_multi_tenant.js ec2-user@$IP:~/
+done
+
+echo "🔥 Launching 100K RPS Distributed Test!"
+echo "Targeting: $GATEWAY_URL"
+
+for IP in $WORKER_IPS; do
+  echo "--> Executing 20,000 RPS on worker $IP"
+  ssh -i ~/.ssh/id_rsa ec2-user@$IP \
+    "GATEWAY_URL=\"$GATEWAY_URL\" FUNCTION_ID_1=\"$FUNC1_ID\" FUNCTION_ID_2=\"$FUNC2_ID\" FUNCTION_ID_3=\"$FUNC3_ID\" TARGET_RPS=20000 k6 run ~/k100_multi_tenant.js > k6_run.stdout 2>&1 &"
+done

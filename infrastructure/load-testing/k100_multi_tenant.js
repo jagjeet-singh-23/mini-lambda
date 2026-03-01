@@ -1,16 +1,16 @@
 import { check } from 'k6';
 import http from 'k6/http';
 
-// 100K RPS (100,000 requests per second) configured for maximum EC2 throughput
+// 2,000 RPS locally fallback, configurable via TARGET_RPS for distributed scaling
 export const options = {
     scenarios: {
         constant_request_rate: {
             executor: 'constant-arrival-rate',
-            rate: 100000, 
-            timeUnit: '1s', // 100k requests per second
-            duration: '1m', // Sustain for 1 minute
-            preAllocatedVUs: 5000, // Pre-allocate 5,000 virtual users
-            maxVUs: 20000, // Allow up to 20,000 virtual users if latency spikes
+            rate: __ENV.TARGET_RPS || 2000, 
+            timeUnit: '1s', 
+            duration: '1m', 
+            preAllocatedVUs: 500, 
+            maxVUs: 5000, 
         },
     },
     thresholds: {
