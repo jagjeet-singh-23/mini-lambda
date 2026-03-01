@@ -27,23 +27,24 @@ resource "aws_security_group" "jmeter_sg" {
 resource "aws_instance" "jmeter_worker" {
   count                  = 5
   ami                    = data.aws_ami.amazon_linux_2023.id
-  instance_type          = "c6a.2xlarge"
+  instance_type          = "c6a.xlarge"
   vpc_security_group_ids = [aws_security_group.jmeter_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
               dnf update -y
-              dnf install -y java-17-amazon-corretto wget tmux
-              wget https://dlcdn.apache.org//jmeter/binaries/apache-jmeter-5.6.3.tgz
-              tar -xzf apache-jmeter-5.6.3.tgz
+              dnf install -y wget tmux jq
+              wget https://github.com/grafana/k6/releases/download/v0.49.0/k6-v0.49.0-linux-amd64.tar.gz
+              tar -xzf k6-v0.49.0-linux-amd64.tar.gz
+              mv k6-v0.49.0-linux-amd64/k6 /usr/bin/k6
               EOF
 
   tags = {
-    Name = "JMeter-Worker-${count.index + 1}"
+    Name = "K6-Worker-${count.index + 1}"
     Role = "LoadGenerator"
   }
 }
 
-output "jmeter_worker_ips" {
+output "k6_worker_ips" {
   value = aws_instance.jmeter_worker[*].public_ip
 }
