@@ -14,6 +14,7 @@ spec:
         app: build-master
     spec:
       enableServiceLinks: false
+      serviceAccountName: build-master
       containers:
         - name: build-master
           image: ghcr.io/${GITHUB_USER}/build-master:latest

@@ -15,6 +15,7 @@ data:
   REDIS_RATELIMIT_ADDR: "mini-lambda-redis.pbdkl2.0001.aps1.cache.amazonaws.com:6379"
   RABBITMQ_URL: "${RABBITMQ_URL}"
   S3_ENDPOINT: ""
+  S3_REGION: "ap-south-1"
   S3_BUCKET: "mini-lambda-storage-20260228134417281800000001"
   RATE_LIMIT_CAPACITY: "10000"
   RATE_LIMIT_REFILL_RATE: "5000"
