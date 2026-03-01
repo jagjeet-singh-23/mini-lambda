@@ -25,7 +25,7 @@ resource "aws_security_group" "jmeter_sg" {
 }
 
 resource "aws_instance" "jmeter_worker" {
-  count                  = 5
+  count                  = 4
   ami                    = data.aws_ami.amazon_linux_2023.id
   instance_type          = "c6a.xlarge"
   vpc_security_group_ids = [aws_security_group.jmeter_sg.id]

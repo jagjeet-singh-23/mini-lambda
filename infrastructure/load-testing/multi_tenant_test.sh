@@ -82,7 +82,7 @@ echo ""
 echo "⏳ Sleeping for 90 seconds to allow ECR image compilation..."
 sleep 90
 
-echo "🚀 [Scenario 4 & 5] Provisioning 5x c6a.xlarge k6 nodes via Terraform for strictly Distributed Testing..."
+echo "🚀 [Scenario 4 & 5] Provisioning 4x c6a.xlarge k6 nodes via Terraform for strictly Distributed Testing..."
 cd $DIR
 terraform init
 terraform apply -auto-approve
@@ -94,7 +94,7 @@ sleep 60
 # Fetch IPs from Terraform output (ensure jq is installed)
 WORKER_IPS=$(terraform output -json k6_worker_ips | jq -r '.[]')
 
-echo "📤 Uploading Test Plan to all 5 EC2 worker nodes..."
+echo "📤 Uploading Test Plan to all 4 EC2 worker nodes..."
 for IP in $WORKER_IPS; do
   ssh-keyscan -H $IP >> ~/.ssh/known_hosts 2>/dev/null
   scp -i ~/.ssh/id_rsa $DIR/k100_multi_tenant.js ec2-user@$IP:~/
@@ -104,7 +104,7 @@ echo "🔥 Launching 100K RPS Distributed Test!"
 echo "Targeting: $GATEWAY_URL"
 
 for IP in $WORKER_IPS; do
-  echo "--> Executing 20,000 RPS on worker $IP"
+  echo "--> Executing 25,000 RPS on worker $IP"
   ssh -i ~/.ssh/id_rsa ec2-user@$IP \
-    "GATEWAY_URL=\"$GATEWAY_URL\" FUNCTION_ID_1=\"$FUNC1_ID\" FUNCTION_ID_2=\"$FUNC2_ID\" FUNCTION_ID_3=\"$FUNC3_ID\" TARGET_RPS=20000 k6 run ~/k100_multi_tenant.js > k6_run.stdout 2>&1 &"
+    "GATEWAY_URL=\"$GATEWAY_URL\" FUNCTION_ID_1=\"$FUNC1_ID\" FUNCTION_ID_2=\"$FUNC2_ID\" FUNCTION_ID_3=\"$FUNC3_ID\" TARGET_RPS=25000 k6 run ~/k100_multi_tenant.js > k6_run.stdout 2>&1 &"
 done
