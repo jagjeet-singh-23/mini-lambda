@@ -21,32 +21,14 @@ data "aws_subnets" "private" {
 }
 
 # 3. Fetch the EKS Node Security Group to allow traffic FROM the EKS pods
-data "aws_security_group" "eks_nodes" {
-  tags = {
-    "Name" = "eksctl-mini-lambda-prod-cluster/ClusterSharedNodeSecurityGroup"
-  }
-}
+# (Removed to fix terraform destroy after eksctl deletion)
 
 # 4. Create a Security Group for RDS and ElastiCache that trusts the EKS Nodes
 resource "aws_security_group" "managed_services" {
   name_prefix = "mini-lambda-managed-sg-"
   vpc_id      = data.aws_vpc.eks_vpc.id
 
-  # Allow Postgres from EKS
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [data.aws_security_group.eks_nodes.id]
-  }
-
-  # Allow Redis from EKS
-  ingress {
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = [data.aws_security_group.eks_nodes.id]
-  }
+  # Ingress rules removed to prevent reading deleted data source during destroy
 }
 
 
