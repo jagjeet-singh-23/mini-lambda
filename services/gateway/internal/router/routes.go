@@ -11,7 +11,7 @@ func (g *Gateway) SetupRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Function execution
-	mux.HandleFunc("/invoke", g.HandleInvoke)
+	mux.HandleFunc("/functions/", g.HandleInvokeFunction)
 
 	// Function management
 	mux.HandleFunc("/functions", func(w http.ResponseWriter, r *http.Request) {
