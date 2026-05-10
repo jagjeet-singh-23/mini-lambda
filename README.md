@@ -14,7 +14,7 @@ It orchestrates dynamic code execution utilizing a robust API Gateway, an asynch
 - **Resilient Traffic Control:** Implemented the Token Bucket algorithm using atomic **Redis Lua Scripts** for distributed rate limiting.
 - **Circuit Breakers (State Pattern):** Dynamically isolates downstream microservices. If the Build Service goes down, the Lambda Execution API remains instantly available without cascading failures.
 - **Asynchronous Build Pipeline:** Inbound zip functions are hashed for idempotency and uploaded to **MinIO (S3)**. Build jobs are dispatched to **RabbitMQ**, where decoupled worker nodes safely compile the runtimes.
-- **Elastic Invocation Engine:** Incoming `/invoke` payloads target an internal runner pool natively managed by the **Kubernetes HPA** (scaling dynamically on CPU/Memory pressure).
+- **Elastic Invocation Engine:** Incoming `POST /functions/{function_id}/invoke` payloads target an internal runner pool natively managed by the **Kubernetes HPA** (scaling dynamically on CPU/Memory pressure).
 - **Comprehensive Observability:** Fully instrumented edge-to-edge with **Prometheus**, **Loki Logs**, **Grafana Dashboards**.
 
 ## �🗂 Project Structure
@@ -90,12 +90,9 @@ _Returns HTTP 202 Accepted with a unique `job_id` and `function_id` pending asyn
 ### 2. Invoke the Function
 
 ```bash
-curl -X POST http://localhost:8080/invoke \
+curl -X POST http://localhost:8080/functions/<RETURNED_FUNCTION_ID>/invoke \
   -H "Content-Type: application/json" \
-  -d '{
-    "function_id": "<RETURNED_FUNCTION_ID>",
-    "payload": {"name": "World"}
-  }'
+  -d '{"name": "World"}'
 ```
 
 ## 🗺 Production Roadmap (1M+ Users)
@@ -106,7 +103,7 @@ To scale this proof-of-concept into a global, production-ready system capable of
 2. **KEDA for Asynchronous Scaling:** Implement [KEDA](https://keda.sh/) (Kubernetes Event-driven Autoscaling) to scale the `build-worker` pods directly based on the depth of the **RabbitMQ** build queue, rather than purely CPU/Memory.
 3. **Containerized Function Images (ECR):** Transition from pulling Zip archives from MinIO at runtime to building actual Docker container images for each function and pushing them to **Amazon Elastic Container Registry (ECR)**. The Lambda Service will then dynamically spin up these dedicated containers.
 4. **Redis Clustering:** A single Redis node for the Token Bucket will bottleneck under millions of RPS. We will migrate `redis-ratelimit` and `redis-cache` to a highly available **Redis Cluster** setup.
-5. **Build Service Stress Testing:** The current JMeter test suite focuses on the `/invoke` proxy latency. Future benchmarking will stress-test the `build-master` API and the RabbitMQ queue limits during massive burst function deployments.
+5. **Build Service Stress Testing:** The current JMeter test suite focuses on function invoke proxy latency. Future benchmarking will stress-test the `build-master` API and the RabbitMQ queue limits during massive burst function deployments.
 
 ---
 
