@@ -14,6 +14,7 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/cache"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/events"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/executor"
+	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/invoke"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/storage"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 	_ "github.com/lib/pq"
@@ -105,13 +106,8 @@ func main() {
 	// Initialize webhook handler (used by cron scheduler and event bus)
 	_ = events.NewWebhookHandler(webhookRepo, eventBus)
 
-	// HTTP server for /invoke endpoint
-	http.HandleFunc("/invoke", func(w http.ResponseWriter, r *http.Request) {
-		// TODO: Implement invoke handler
-		// This will be called by the gateway
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Lambda Service - Invoke endpoint"))
-	})
+	invokeHandler := invoke.NewHandler(functionService, runtimeManager, 1024*1024)
+	http.HandleFunc("/functions/", invokeHandler.HandleInvoke)
 
 	// Metrics endpoint
 	http.Handle("/metrics", promhttp.Handler())
