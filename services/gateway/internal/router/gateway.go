@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jagjeet-singh-23/mini-lambda/services/gateway/internal/circuitbreaker"
@@ -89,6 +90,52 @@ func (g *Gateway) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	// Forward to lambda-service
 	g.forwardRequest(w, r, g.config.LambdaServiceURL+"/invoke", "lambda-service")
+}
+
+func parseInvokeFunctionID(path string) (string, bool) {
+	const prefix = "/functions/"
+	const suffix = "/invoke"
+
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+
+	functionID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	functionID = strings.Trim(functionID, "/")
+	if functionID == "" || strings.Contains(functionID, "/") {
+		return "", false
+	}
+
+	return functionID, true
+}
+
+func (g *Gateway) HandleInvokeFunction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	functionID, ok := parseInvokeFunctionID(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	allowed, err := g.invokeLimiter.Allow(r.Context(), functionID)
+	if err != nil {
+		logger.Error("Rate limiter error", "error", err, "function_id", functionID)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !allowed {
+		w.Header().Set("X-RateLimit-Retry-After", "1")
+		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+
+	targetURL := g.config.LambdaServiceURL + r.URL.Path
+	g.forwardRequest(w, r, targetURL, "lambda-service")
 }
 
 // HandleCreateFunction routes function creation to build-service
