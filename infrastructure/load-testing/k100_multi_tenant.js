@@ -54,7 +54,7 @@ export default function () {
     };
 
     // Fire the invocation request
-    const res = http.post(`${BASE_URL}/invoke?id=${randomFunctionId}`, payload, params);
+    const res = http.post(`${BASE_URL}/functions/${randomFunctionId}/invoke`, payload, params);
 
     // Validate the response
     check(res, {

@@ -166,10 +166,9 @@ POST /functions
 }
 
 # Invoke Function
-POST /invoke
+POST /functions/{function_id}/invoke
 {
-  "function_id": "uuid",
-  "payload": {"key": "value"}
+  "key": "value"
 }
 
 # Get Function
