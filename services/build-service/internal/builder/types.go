@@ -8,7 +8,11 @@ import (
 type BuildJob struct {
 	ID          string     `json:"id"`
 	FunctionID  string     `json:"function_id"`
+	Name        string     `json:"name"`
 	Runtime     string     `json:"runtime"`
+	Handler     string     `json:"handler"`
+	MemoryMB    int64      `json:"memory_mb"`
+	TimeoutSecs int        `json:"timeout_seconds"`
 	PackageURL  string     `json:"package_url"`
 	RepoURL     string     `json:"repo_url,omitempty"`
 	Dockerfile  string     `json:"dockerfile,omitempty"`

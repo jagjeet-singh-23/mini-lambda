@@ -14,6 +14,7 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/builder"
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/queue"
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/storage"
+	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -51,6 +52,15 @@ func main() {
 	defer consumer.Close()
 
 	log.Println("✅ RabbitMQ consumer initialized")
+
+	// Initialize RabbitMQ publisher (for function.built events)
+	publisher, err := queue.NewPublisher(amqpURL)
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize RabbitMQ publisher: %v", err)
+	}
+	defer publisher.Close()
+
+	log.Println("✅ RabbitMQ publisher initialized")
 
 	// Initialize S3 storage
 	s3Storage, err := storage.NewS3Storage(s3Endpoint, s3Region, s3Bucket, s3AccessKey, s3SecretKey)
@@ -94,7 +104,7 @@ func main() {
 
 	// Start consuming build jobs
 	err = consumer.Consume("build-jobs", func(body []byte) error {
-		return processBuildJob(ctx, body, s3Storage, zipProcessor, dockerBuilder, webhookNotifier)
+		return processBuildJob(ctx, body, s3Storage, zipProcessor, dockerBuilder, webhookNotifier, publisher)
 	})
 
 	if err != nil {
@@ -111,6 +121,7 @@ func processBuildJob(
 	zipProcessor *builder.ZIPProcessor,
 	dockerBuilder *builder.DockerBuilder,
 	webhookNotifier *builder.WebhookNotifier,
+	publisher *queue.Publisher,
 ) error {
 	// Parse build job
 	var job builder.BuildJob
@@ -179,6 +190,22 @@ func processBuildJob(
 		logger.Info("Uploading extracted files to S3", "function_id", job.FunctionID)
 		if err := s3Storage.UploadDirectory(ctx, job.FunctionID, extractedDir); err != nil {
 			return handleBuildFailureWithMetrics(ctx, &job, webhookNotifier, fmt.Sprintf("Failed to upload artifacts: %v", err), startTime)
+		}
+
+		// Notify lambda-service that the function is ready to invoke
+		evt := domain.FunctionBuiltEvent{
+			FunctionID:  job.FunctionID,
+			Name:        job.Name,
+			Runtime:     job.Runtime,
+			Handler:     job.Handler,
+			S3Prefix:    fmt.Sprintf("functions/%s/", job.FunctionID),
+			MemoryMB:    job.MemoryMB,
+			TimeoutSecs: job.TimeoutSecs,
+			BuiltAt:     time.Now(),
+		}
+		if err := publisher.Publish(ctx, domain.FunctionBuiltQueue, evt); err != nil {
+			logger.Error("Failed to publish function.built event", "function_id", job.FunctionID, "error", err)
+			// Non-fatal: build succeeded, registration will be retried on next deploy
 		}
 	}
 
