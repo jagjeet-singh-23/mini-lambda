@@ -15,6 +15,7 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/events"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/executor"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/invoke"
+	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/registration"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/storage"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 	_ "github.com/lib/pq"
@@ -127,6 +128,19 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start function registration consumer (build-service → lambda-service bridge)
+	registrationConsumer, err := registration.NewConsumer(config.RabbitMQURL, s3Storage, functionRepo)
+	if err != nil {
+		log.Fatalf("Failed to initialize registration consumer: %v", err)
+	}
+	defer registrationConsumer.Close()
+
+	go func() {
+		if err := registrationConsumer.Start(ctx); err != nil {
+			log.Printf("Registration consumer error: %v", err)
+		}
+	}()
 
 	// Start event bus
 	go func() {

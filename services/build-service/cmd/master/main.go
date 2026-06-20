@@ -213,17 +213,30 @@ func handleCreateFunction(
 		}
 	}
 
+	memoryMB := int64(req.Memory)
+	if memoryMB <= 0 {
+		memoryMB = 128
+	}
+	timeoutSecs := req.Timeout
+	if timeoutSecs <= 0 {
+		timeoutSecs = 30
+	}
+
 	// Create build job
 	job := builder.BuildJob{
-		ID:         jobID.String(),
-		FunctionID: functionID.String(),
-		Runtime:    req.Runtime,
-		PackageURL: packageKey,
-		RepoURL:    req.RepoURL,
-		Dockerfile: req.Dockerfile,
-		WebhookURL: req.WebhookURL,
-		Status:     string(builder.StatusQueued),
-		CreatedAt:  time.Now(),
+		ID:          jobID.String(),
+		FunctionID:  functionID.String(),
+		Name:        req.Name,
+		Runtime:     req.Runtime,
+		Handler:     req.Handler,
+		MemoryMB:    memoryMB,
+		TimeoutSecs: timeoutSecs,
+		PackageURL:  packageKey,
+		RepoURL:     req.RepoURL,
+		Dockerfile:  req.Dockerfile,
+		WebhookURL:  req.WebhookURL,
+		Status:      string(builder.StatusQueued),
+		CreatedAt:   time.Now(),
 	}
 
 	// Publish to RabbitMQ
