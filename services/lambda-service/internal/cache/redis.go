@@ -66,8 +66,14 @@ func (c *RedisCache) GetFunction(ctx context.Context, id string) (*domain.Functi
 	return &fn, nil
 }
 
-// SetFunction stores a function in cache
+// SetFunction stores a function in cache using the default TTL.
 func (c *RedisCache) SetFunction(ctx context.Context, fn *domain.Function) error {
+	return c.SetFunctionWithTTL(ctx, fn, c.ttl)
+}
+
+// SetFunctionWithTTL stores a function in cache with an explicit TTL,
+// allowing callers to apply jitter to avoid synchronised expiry.
+func (c *RedisCache) SetFunctionWithTTL(ctx context.Context, fn *domain.Function, ttl time.Duration) error {
 	key := fmt.Sprintf("function:%s", fn.ID)
 
 	data, err := json.Marshal(fn)
@@ -75,12 +81,12 @@ func (c *RedisCache) SetFunction(ctx context.Context, fn *domain.Function) error
 		return fmt.Errorf("failed to marshal function: %w", err)
 	}
 
-	if err := c.client.Set(ctx, key, data, c.ttl).Err(); err != nil {
+	if err := c.client.Set(ctx, key, data, ttl).Err(); err != nil {
 		logger.Error("Cache set error", "error", err, "key", key)
 		return err
 	}
 
-	logger.Debug("Cache set", "key", key, "ttl_seconds", c.ttl.Seconds())
+	logger.Debug("Cache set", "key", key, "ttl_seconds", ttl.Seconds())
 	return nil
 }
 
