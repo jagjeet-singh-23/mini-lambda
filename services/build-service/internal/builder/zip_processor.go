@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 )
@@ -82,7 +83,7 @@ func (zp *ZIPProcessor) extractFile(file *zip.File, targetDir string, totalSize 
 	targetPath := filepath.Join(targetDir, file.Name)
 
 	// Prevent directory traversal attacks
-	if !filepath.HasPrefix(targetPath, filepath.Clean(targetDir)+string(os.PathSeparator)) {
+	if !strings.HasPrefix(filepath.Clean(targetPath)+string(os.PathSeparator), filepath.Clean(targetDir)+string(os.PathSeparator)) {
 		return fmt.Errorf("invalid file path: %s", file.Name)
 	}
 

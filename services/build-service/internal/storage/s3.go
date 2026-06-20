@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
-	// Added this import
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/builder"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 )
@@ -47,10 +48,38 @@ func NewS3Storage(endpoint, region, bucket, accessKey, secretKey string) (*S3Sto
 
 	logger.Info("Initializing S3 Client", "endpoint", endpoint, "region", region, "bucket", bucket, "accessKey", maskKey(accessKey))
 
-	return &S3Storage{
-		client: client,
-		bucket: bucket,
-	}, nil
+	store := &S3Storage{client: client, bucket: bucket}
+	if err := store.ensureBucket(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ensure bucket %q exists: %w", bucket, err)
+	}
+
+	return store, nil
+}
+
+// ensureBucket creates the bucket if it does not already exist.
+func (s *S3Storage) ensureBucket(ctx context.Context) error {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
+	if err == nil {
+		logger.Info("S3 bucket already exists", "bucket", s.bucket)
+		return nil
+	}
+
+	var notFound *types.NotFound
+	var noSuchBucket *types.NoSuchBucket
+	if !errorAs(err, &notFound) && !errorAs(err, &noSuchBucket) {
+		return fmt.Errorf("head bucket: %w", err)
+	}
+
+	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(s.bucket)})
+	if err != nil {
+		return fmt.Errorf("create bucket: %w", err)
+	}
+	logger.Info("S3 bucket created", "bucket", s.bucket)
+	return nil
+}
+
+func errorAs[T any](err error, target *T) bool {
+	return errors.As(err, target)
 }
 
 func maskKey(k string) string {

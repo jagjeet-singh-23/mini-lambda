@@ -180,10 +180,8 @@ func (c *Consumer) Consume(queueName string, handler func([]byte) error) error {
 		err := handler(msg.Body)
 		if err != nil {
 			logger.Error("Failed to process message", "error", err)
-			// Reject and requeue
-			msg.Nack(false, true)
+			msg.Nack(false, false) // discard — build failures won't self-heal on retry
 		} else {
-			// Acknowledge
 			msg.Ack(false)
 		}
 	}

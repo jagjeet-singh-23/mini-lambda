@@ -6,14 +6,13 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-
-	//	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/pool"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
@@ -275,9 +274,10 @@ func (r *DockerRuntime) startAsyncLogRead(
 	resultCh := make(chan logResult, 1)
 	go func() {
 		defer resp.Close()
-		var buf bytes.Buffer
-		_, err := io.Copy(&buf, resp.Reader)
-		resultCh <- logResult{data: buf.Bytes(), err: err}
+		var stdout, stderr bytes.Buffer
+		_, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+		combined := append(stdout.Bytes(), stderr.Bytes()...)
+		resultCh <- logResult{data: combined, err: err}
 		close(resultCh)
 	}()
 	return resultCh
