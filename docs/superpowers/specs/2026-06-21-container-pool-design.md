@@ -65,9 +65,11 @@ runLifecycle(ctx):
 Current `Acquire` returns `nil` when no warm container is available. This is replaced with a **channel-based blocking acquire**:
 
 - `DockerPool` holds an `idle chan *Container` (buffered, size = `MaxSize`)
-- On `CreateNew`: send the new container to `idle`
-- On `Release`: if container is healthy and below `MaxUseCount`, send back to `idle`; otherwise discard and call `replenish`
-- On `Acquire`: `select` on `idle` and `ctx.Done()`
+- On `CreateNew` (called by `replenish` or on first pool fill): send the new container to `idle`
+- On `Release`: if container is below `MaxUseCount`, send back to `idle`; otherwise remove and call `replenish`
+- On `Acquire`: `select` on `idle` and `ctx.Done()` — returns `ctx.Err()` if context expires while waiting
+
+`CreateNew` on the `ContainerPool` interface becomes internal to the pool (only called by `replenish`). External callers use only `Acquire` and `Release`. The `ContainerPool` interface retains `CreateNew` for now to avoid breaking the Kubernetes implementation, but the Docker executor calls only `Acquire`.
 
 This caps concurrent in-flight invocations at `MaxSize` and provides natural backpressure.
 
@@ -102,7 +104,8 @@ DockerRuntime.Start(ctx):
   pool.Start(ctx)
 
 DockerRuntime.Cleanup():
-  pool.Shutdown(ctx)    // stop + remove all warm containers
+  // domain.Runtime.Cleanup() takes no ctx; use context.Background() with 10s timeout
+  pool.Shutdown(shutdownCtx)    // stop + remove all warm containers
   client.Close()
 ```
 
@@ -131,6 +134,14 @@ All tests use a real Docker client. No mocks.
 3. Wait 200ms
 4. Assert `pool.Size() == 1` (evicted + replaced, not drained)
 5. Assert `Stats().ColdStarts == 2` (initial + replenishment)
+
+---
+
+## Graceful shutdown — WaitGroup gap
+
+`waitForShutdown` currently cancels `ctx` and starts HTTP server shutdown without waiting for background goroutines to finish. A goroutine doing a final Docker API call or RabbitMQ ack after its client closes logs confusing errors.
+
+Fix: add a `sync.WaitGroup` in `main.go`. Each goroutine (`go func() { ... }()`) gets `wg.Add(1)` before launch and `defer wg.Done()` inside. After `server.Shutdown`, call `wg.Wait()` before returning. Covers: registration consumer, event bus, cron scheduler, pool lifecycle goroutine.
 
 ---
 
