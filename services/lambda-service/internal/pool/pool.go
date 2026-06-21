@@ -42,53 +42,49 @@ func (s ContainerState) String() string {
 }
 
 type ContainerPool interface {
-	// Acquire gets a warm container from the pool
+	// Start pre-fills the pool to MinSize and launches the lifecycle goroutine.
+	Start(ctx context.Context)
+
+	// Acquire blocks until a warm container is available or ctx is cancelled.
 	Acquire(ctx context.Context) (*Container, error)
 
-	// Release returns a container to the pool
+	// Release returns a container to the pool, or retires it if MaxUseCount is reached.
 	Release(ctx context.Context, container *Container) error
 
-	// CreateNew creates a new container and adds it to the pool
+	// CreateNew creates a new container and adds it to the idle pool.
+	// Returns nil, nil on success (container enters idle channel).
 	CreateNew(ctx context.Context) (*Container, error)
 
-	// Evict removes a container from the pool (LRU strategy)
+	// Evict removes one warm container from the pool.
 	Evict(ctx context.Context) error
 
-	// Size returns the number of containers in the pool
+	// Size returns total containers (idle + in-use).
 	Size() int
 
-	// Stats returns the pool statistics
+	// Stats returns pool statistics.
 	Stats() domain.PoolStats
 
-	// Shutdown shuts down the pool
+	// Shutdown stops and removes all containers.
 	Shutdown(ctx context.Context) error
 }
 
 type PoolConfig struct {
-	Runtime         string
-	MinSize         int
-	MaxSize         int
-	MaxIdleTime     time.Duration
-	MaxUseCount     int64
-	CleanupStrategy CleanupStrategy
+	Runtime      string
+	MinSize      int
+	MaxSize      int
+	MaxIdleTime  time.Duration
+	MaxUseCount  int64
+	TickInterval time.Duration
 }
-
-type CleanupStrategy int
-
-const (
-	CleanupMinimal    CleanupStrategy = iota // reset working directory
-	CleanupStandard                          // Reset filesystem changes, clear temp files
-	CleanupAggressive                        // Kill all processes, reset everything
-)
 
 func DefaultPoolConfig(runtime string) PoolConfig {
 	return PoolConfig{
-		Runtime:         runtime,
-		MinSize:         10,
-		MaxSize:         50,
-		MaxIdleTime:     2 * time.Minute,
-		MaxUseCount:     500,
-		CleanupStrategy: CleanupStandard,
+		Runtime:      runtime,
+		MinSize:      1,
+		MaxSize:      5,
+		MaxIdleTime:  5 * time.Minute,
+		MaxUseCount:  500,
+		TickInterval: 30 * time.Second,
 	}
 }
 
