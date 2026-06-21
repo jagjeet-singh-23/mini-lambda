@@ -250,6 +250,8 @@ func (p *KubernetesPodPool) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+func (p *KubernetesPodPool) Start(_ context.Context) {}
+
 func (p *KubernetesPodPool) moveToEnd(index int) {
 	if index == len(p.containers)-1 {
 		return

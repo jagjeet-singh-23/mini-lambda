@@ -249,6 +249,8 @@ func (p *DockerPool) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+func (p *DockerPool) Start(_ context.Context) {}
+
 func (p *DockerPool) moveToEnd(index int) {
 	if index == len(p.containers)-1 {
 		return
@@ -264,26 +266,7 @@ func (p *DockerPool) cleanContainer(
 	container *Container,
 ) error {
 	container.State = StateCleaning
-
-	switch p.config.CleanupStrategy {
-	case CleanupMinimal:
-		return nil
-
-	case CleanupStandard:
-		return nil
-
-	case CleanupAggressive:
-		if err := p.stopDockerContainer(ctx, container.ID); err != nil {
-			return err
-		}
-		if err := p.startDockerContainer(ctx, container.ID); err != nil {
-			return err
-		}
-		return nil
-
-	default:
-		return nil
-	}
+	return nil
 }
 
 func (p *DockerPool) removeContainer(
