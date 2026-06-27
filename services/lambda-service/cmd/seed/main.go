@@ -5,21 +5,29 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/storage"
 	_ "github.com/lib/pq"
 )
 
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func main() {
 	ctx := context.Background()
 
 	s3, err := storage.NewS3Storage(ctx, storage.S3Config{
-		Endpoint:        "http://localhost:9000",
-		Region:          "us-east-1",
-		AccessKeyID:     "minioadmin",
-		SecretAccessKey: "minioadmin",
-		Bucket:          "lambda-functions",
+		Endpoint:        getEnv("S3_ENDPOINT", "http://localhost:9000"),
+		Region:          getEnv("S3_REGION", "us-east-1"),
+		AccessKeyID:     getEnv("S3_ACCESS_KEY", "minioadmin"),
+		SecretAccessKey: getEnv("S3_SECRET_KEY", "minioadmin"),
+		Bucket:          getEnv("S3_BUCKET", "lambda-functions"),
 	})
 	if err != nil {
 		log.Fatalf("S3 init failed: %v", err)
@@ -36,7 +44,15 @@ func main() {
 	}
 	log.Printf("Code stored at S3 key: %s", codeKey)
 
-	db, err := sql.Open("postgres", "host=localhost port=5432 user=postgres password=postgres dbname=mini_lambda sslmode=disable")
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		getEnv("POSTGRES_HOST", "localhost"),
+		getEnv("POSTGRES_PORT", "5432"),
+		getEnv("POSTGRES_USER", "postgres"),
+		getEnv("POSTGRES_PASSWORD", "postgres"),
+		getEnv("POSTGRES_DB", "mini_lambda"),
+		getEnv("POSTGRES_SSLMODE", "disable"),
+	)
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		log.Fatalf("DB open failed: %v", err)
 	}

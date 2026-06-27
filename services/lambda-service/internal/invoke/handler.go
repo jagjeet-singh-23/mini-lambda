@@ -100,9 +100,11 @@ func (h *Handler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 	execution.MarkSuccess(result.Output)
 	execution.MemoryUsed = result.MemoryUsed
 	execution.IsWarmStart = result.WasWarmStart
-	if err := h.functions.SaveExecution(r.Context(), execution); err != nil {
-		logger.Error("Failed to save execution", "function_id", functionID, "error", err)
-	}
+	go func() {
+		if err := h.functions.SaveExecution(context.Background(), execution); err != nil {
+			logger.Error("Failed to save execution", "function_id", functionID, "error", err)
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
