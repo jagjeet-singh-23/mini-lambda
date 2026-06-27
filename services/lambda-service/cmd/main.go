@@ -185,6 +185,10 @@ func main() {
 
 	waitForShutdown(server, cancel, &wg)
 
+	if err := runtimeManager.Shutdown(context.Background()); err != nil {
+		log.Printf("Runtime manager shutdown error: %v", err)
+	}
+
 	log.Println("👋 Lambda Service shutdown complete")
 }
 

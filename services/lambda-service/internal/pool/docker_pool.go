@@ -127,6 +127,10 @@ func (p *DockerPool) Release(ctx context.Context, c *Container) error {
 
 	c.State = StateWarm
 	c.LastUsed = time.Now()
+	if p.closed.Load() {
+		p.stopDockerContainer(ctx, c.ID)
+		return nil
+	}
 	select {
 	case p.idle <- c:
 	default:
