@@ -117,7 +117,11 @@ func (p *DockerPool) Release(ctx context.Context, c *Container) error {
 			return err
 		}
 		p.updateStats(func(m *poolMetrics) { m.totalEvictions++ })
-		go p.replenishOne(context.Background())
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.replenishOne(context.Background())
+		}()
 		return nil
 	}
 
@@ -287,7 +291,11 @@ done:
 	// Replenish to MinSize in the background so the ticker is not blocked.
 	deficit := p.config.MinSize - len(p.idle)
 	for i := 0; i < deficit; i++ {
-		go p.enqueueNew(ctx)
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			_ = p.enqueueNew(ctx)
+		}()
 	}
 }
 
