@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/events"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/executor"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/invoke"
+	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/pool"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/registration"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/storage"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
@@ -71,7 +74,15 @@ func main() {
 	dlqRepo := storage.NewPostgresDeadLetterQueue(db)
 
 	// Initialize runtime/executor
-	runtimeManager, err := executor.NewManager(s3Storage)
+	poolCfg := pool.PoolConfig{
+		MinSize:      config.PoolMinSize,
+		MaxSize:      config.PoolMaxSize,
+		MaxIdleTime:  config.PoolIdleTTL,
+		MaxUseCount:  500,
+		TickInterval: 30 * time.Second,
+	}
+
+	runtimeManager, err := executor.NewManager(s3Storage, poolCfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize runtime manager: %v", err)
 	}
@@ -136,25 +147,33 @@ func main() {
 	}
 	defer registrationConsumer.Close()
 
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		if err := registrationConsumer.Start(ctx); err != nil {
 			log.Printf("Registration consumer error: %v", err)
 		}
 	}()
 
-	// Start event bus
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		if err := eventBus.Start(ctx); err != nil {
 			log.Printf("Event bus error: %v", err)
 		}
 	}()
 
-	// Start cron scheduler
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		if err := cronScheduler.Start(ctx); err != nil {
 			log.Printf("Cron scheduler error: %v", err)
 		}
 	}()
+
+	runtimeManager.Start(ctx)
 
 	// Start HTTP server
 	go func() {
@@ -164,7 +183,7 @@ func main() {
 		}
 	}()
 
-	waitForShutdown(server, cancel)
+	waitForShutdown(server, cancel, &wg)
 
 	log.Println("👋 Lambda Service shutdown complete")
 }
@@ -183,6 +202,9 @@ type Config struct {
 	S3Bucket     string
 	RabbitMQURL  string
 	RedisAddr    string
+	PoolMinSize  int
+	PoolMaxSize  int
+	PoolIdleTTL  time.Duration
 }
 
 func loadConfig() Config {
@@ -200,6 +222,9 @@ func loadConfig() Config {
 		S3Bucket:     getEnv("S3_BUCKET", ""),
 		RabbitMQURL:  getEnv("RABBITMQ_URL", ""),
 		RedisAddr:    getEnv("REDIS_CACHE_ADDR", ""),
+		PoolMinSize:  getEnvInt("POOL_MIN_SIZE", 1),
+		PoolMaxSize:  getEnvInt("POOL_MAX_SIZE", 5),
+		PoolIdleTTL:  getEnvDuration("POOL_IDLE_TTL", 5*time.Minute),
 	}
 }
 
@@ -234,7 +259,7 @@ func initDatabase(config Config) (*sql.DB, error) {
 	return db, nil
 }
 
-func waitForShutdown(server *http.Server, cancel context.CancelFunc) {
+func waitForShutdown(server *http.Server, cancel context.CancelFunc, wg *sync.WaitGroup) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
@@ -252,6 +277,9 @@ func waitForShutdown(server *http.Server, cancel context.CancelFunc) {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
 	}
+
+	wg.Wait()
+	log.Println("✅ All goroutines stopped")
 }
 
 func getEnv(key, fallback string) string {
@@ -259,4 +287,28 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
