@@ -56,26 +56,21 @@ func NewS3Storage(endpoint, region, bucket, accessKey, secretKey string) (*S3Sto
 	return store, nil
 }
 
-// ensureBucket creates the bucket if it does not already exist.
+// ensureBucket verifies the configured bucket exists; returns an error if not.
+// Bucket provisioning is handled via infrastructure-as-code, not application code.
 func (s *S3Storage) ensureBucket(ctx context.Context) error {
 	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
 	if err == nil {
-		logger.Info("S3 bucket already exists", "bucket", s.bucket)
+		logger.Info("S3 bucket exists", "bucket", s.bucket)
 		return nil
 	}
 
 	var notFound *types.NotFound
 	var noSuchBucket *types.NoSuchBucket
-	if !errorAs(err, &notFound) && !errorAs(err, &noSuchBucket) {
-		return fmt.Errorf("head bucket: %w", err)
+	if errorAs(err, &notFound) || errorAs(err, &noSuchBucket) {
+		return fmt.Errorf("bucket %q does not exist — provision it via IaC before starting the service", s.bucket)
 	}
-
-	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(s.bucket)})
-	if err != nil {
-		return fmt.Errorf("create bucket: %w", err)
-	}
-	logger.Info("S3 bucket created", "bucket", s.bucket)
-	return nil
+	return fmt.Errorf("head bucket: %w", err)
 }
 
 func errorAs[T any](err error, target *T) bool {
