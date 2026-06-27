@@ -153,29 +153,28 @@ func TestDockerPool_TTLEvictionAndReplenishment(t *testing.T) {
 	firstID := c.ID
 	p.Release(ctx, c)
 
-	// Wait for TTL (100ms) + at least one tick (50ms) + buffer.
+	// Wait for TTL (100ms) + at least two ticks (50ms each) for eviction to register.
 	time.Sleep(400 * time.Millisecond)
-
-	// Pool must still hold MinSize=1.
-	if got := p.Size(); got != 1 {
-		t.Errorf("pool size = %d after eviction, want 1 (replenishment failed)", got)
-	}
 
 	stats := p.Stats()
 	if stats.TotalEvictions < 1 {
-		t.Errorf("TotalEvictions = %d, want >= 1", stats.TotalEvictions)
-	}
-	if stats.ColdStarts < 2 {
-		t.Errorf("ColdStarts = %d, want >= 2 (initial fill + replenishment)", stats.ColdStarts)
+		t.Errorf("TotalEvictions = %d after 400ms, want >= 1 (eviction did not happen)", stats.TotalEvictions)
 	}
 
-	// The replacement container must have a different ID.
-	c2, err := p.Acquire(ctx)
+	// Replenishment is async (background goroutine creates a new container).
+	// Block on Acquire with a generous timeout instead of a fixed sleep.
+	acquireCtx, acquireCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer acquireCancel()
+
+	c2, err := p.Acquire(acquireCtx)
 	if err != nil {
-		t.Fatalf("post-eviction Acquire: %v", err)
+		t.Fatalf("post-eviction Acquire timed out — replenishment did not complete: %v", err)
 	}
 	if c2.ID == firstID {
 		t.Errorf("got same container ID after eviction: %s", c2.ID)
+	}
+	if s := p.Stats(); s.ColdStarts < 2 {
+		t.Errorf("ColdStarts = %d, want >= 2 (initial fill + replenishment)", s.ColdStarts)
 	}
 	p.Release(ctx, c2)
 }

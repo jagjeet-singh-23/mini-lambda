@@ -183,13 +183,14 @@ func (p *DockerPool) Stats() domain.PoolStats {
 
 // Shutdown stops the lifecycle goroutine, then stops and removes all containers.
 func (p *DockerPool) Shutdown(ctx context.Context) error {
-	// Signal the lifecycle goroutine to stop and wait for it.
+	// Signal the lifecycle goroutine to stop, wait for it, then close the
+	// idle channel. All three are guarded by the CAS so a second Shutdown
+	// call cannot double-close either channel.
 	if p.closed.CompareAndSwap(false, true) {
 		close(p.stopCh)
+		p.wg.Wait()
+		close(p.idle)
 	}
-	p.wg.Wait()
-
-	close(p.idle)
 	var errs []error
 	for c := range p.idle {
 		if err := p.stopDockerContainer(ctx, c.ID); err != nil {
