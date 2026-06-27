@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/pool"
 	"github.com/jagjeet-singh-23/mini-lambda/services/lambda-service/internal/storage"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
@@ -24,13 +25,16 @@ type Manager struct {
 
 	// s3Storage is used to dynamically check for ECR Image URIs
 	s3Storage *storage.S3Storage
+
+	poolCfg pool.PoolConfig
 }
 
-func NewManager(s3Storage *storage.S3Storage) (*Manager, error) {
+func NewManager(s3Storage *storage.S3Storage, poolCfg pool.PoolConfig) (*Manager, error) {
 	m := &Manager{
 		runtimes:         make(map[string]domain.Runtime),
 		metricsCollector: metrics.NewMetricsCollector(),
 		s3Storage:        s3Storage,
+		poolCfg:          poolCfg,
 	}
 
 	if err := m.registerDefaultRuntimes(); err != nil {
@@ -70,6 +74,7 @@ func (m *Manager) registerDefaultRuntimes() error {
 				config.runtimeType,
 				config.baseImage,
 				m.metricsCollector,
+				m.poolCfg,
 			)
 		}
 
@@ -183,4 +188,19 @@ func (m *Manager) Execute(
 // GetMetricsCollector returns the metrics collector
 func (m *Manager) GetMetricsCollector() *metrics.MetricsCollector {
 	return m.metricsCollector
+}
+
+type startable interface {
+	Start(context.Context)
+}
+
+// Start propagates the service context to each runtime's pool lifecycle goroutine.
+func (m *Manager) Start(ctx context.Context) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, runtime := range m.runtimes {
+		if s, ok := runtime.(startable); ok {
+			s.Start(ctx)
+		}
+	}
 }

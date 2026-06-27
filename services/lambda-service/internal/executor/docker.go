@@ -37,6 +37,7 @@ type logResult struct {
 func NewDockerRuntime(
 	runtimeType, baseImage string,
 	metricsCollector *metrics.MetricsCollector,
+	poolCfg pool.PoolConfig,
 ) (*DockerRuntime, error) {
 	if runtimeType == "" || baseImage == "" {
 		return nil, fmt.Errorf("runtime type and base image cannot be empty")
@@ -47,7 +48,7 @@ func NewDockerRuntime(
 		return nil, err
 	}
 
-	containerPool, err := initContainerPool(runtimeType, baseImage)
+	containerPool, err := initContainerPool(poolCfg, runtimeType, baseImage)
 	if err != nil {
 		return nil, err
 	}
@@ -79,9 +80,9 @@ func initDockerClient() (*client.Client, error) {
 	return cli, nil
 }
 
-func initContainerPool(runtimeType, baseImage string) (pool.ContainerPool, error) {
-	poolConfig := pool.DefaultPoolConfig(runtimeType)
-	containerPool, err := pool.NewDockerPool(poolConfig, baseImage)
+func initContainerPool(cfg pool.PoolConfig, runtimeType, baseImage string) (pool.ContainerPool, error) {
+	cfg.Runtime = runtimeType
+	containerPool, err := pool.NewDockerPool(cfg, baseImage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container pool: %w", err)
 	}
@@ -167,34 +168,24 @@ func (r *DockerRuntime) acquireContainer(
 	poolTimer := NewTimer()
 	c, err := r.Pool.Acquire(ctx)
 	m.PoolAcquireTime = poolTimer.Elapsed()
-
-	if c != nil && err == nil {
-		m.WasWarmStart = true
-		m.ContainerID = c.ID
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to acquire container: %w", err)
+	}
+	wasWarmStart := c.UseCount > 1
+	m.WasWarmStart = wasWarmStart
+	m.ContainerID = c.ID
+	if wasWarmStart {
 		fmt.Printf("🔥 WARM: Container %s (reused %dx)\n", c.ID[:12], c.UseCount)
-
-		// Record warm start metric
 		if r.metricsCollector != nil {
 			r.metricsCollector.RecordWarmStart(r.runtimeType)
 		}
-
-		return c, true, nil
+	} else {
+		fmt.Printf("❄️  COLD: Container %s (pool size: %d)\n", c.ID[:12], r.Pool.Size())
+		if r.metricsCollector != nil {
+			r.metricsCollector.RecordColdStart(r.runtimeType)
+		}
 	}
-
-	nc, err := r.Pool.CreateNew(ctx)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to create new container: %w", err)
-	}
-	m.WasWarmStart = false
-	m.ContainerID = nc.ID
-	fmt.Printf("❄️  COLD: Container %s (pool size: %d)\n", nc.ID[:12], r.Pool.Size())
-
-	// Record cold start metric
-	if r.metricsCollector != nil {
-		r.metricsCollector.RecordColdStart(r.runtimeType)
-	}
-
-	return nc, false, nil
+	return c, wasWarmStart, nil
 }
 
 func (r *DockerRuntime) releaseContainer(ctx context.Context, c *pool.Container, m *ExecutionMetrics) {
@@ -444,13 +435,22 @@ func (r *DockerRuntime) extractOutput(logs []byte) []byte {
 	return logs
 }
 
-// Cleanup implements the Runtime interface
-// Called when shutting down the runtime
+func (r *DockerRuntime) Start(ctx context.Context) {
+	r.Pool.Start(ctx)
+}
+
+// Cleanup implements the Runtime interface.
 func (r *DockerRuntime) Cleanup() error {
+	if r.Pool != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := r.Pool.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+	}
 	if r.client != nil {
 		return r.client.Close()
 	}
-
 	return nil
 }
 
