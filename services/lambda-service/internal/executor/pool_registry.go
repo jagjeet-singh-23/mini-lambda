@@ -48,25 +48,24 @@ func (r *PoolRegistry) Start(ctx context.Context) {
 	r.mu.Unlock()
 }
 
-// Acquire returns a warm container for fn, creating a per-function pool if needed.
+// Acquire returns a warm container for fn, and the pool it came from.
+// Pass the returned pool to Release — do not re-resolve from the registry.
 // fn.Code must contain the S3 key (not code bytes) — use GetFunctionMeta, not GetFunction.
-func (r *PoolRegistry) Acquire(ctx context.Context, fn *domain.Function) (*pool.Container, error) {
+func (r *PoolRegistry) Acquire(ctx context.Context, fn *domain.Function) (*pool.Container, *pool.DockerPool, error) {
 	p, err := r.getOrCreate(fn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return p.Acquire(ctx)
+	c, err := p.Acquire(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, p, nil
 }
 
-// Release returns c to its function's pool.
-func (r *PoolRegistry) Release(ctx context.Context, fn *domain.Function, c *pool.Container) error {
-	r.mu.RLock()
-	entry, ok := r.entries[fn.ID]
-	r.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("no pool for function %s", fn.ID)
-	}
-	return entry.p.Release(ctx, c)
+// Release returns c to the specific pool it was acquired from.
+func (r *PoolRegistry) Release(ctx context.Context, c *pool.Container, p *pool.DockerPool) error {
+	return p.Release(ctx, c)
 }
 
 // PoolStats returns pool statistics for a specific function.
@@ -116,9 +115,9 @@ func (r *PoolRegistry) getOrCreate(fn *domain.Function) (*pool.DockerPool, error
 	r.mu.RUnlock()
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	// Re-check under write lock (double-checked locking).
 	if entry, ok := r.entries[fn.ID]; ok && entry.codeKey == codeKey {
+		r.mu.Unlock()
 		return entry.p, nil
 	}
 	// Stale pool exists (function code was updated) — shut it down asynchronously.
@@ -132,6 +131,7 @@ func (r *PoolRegistry) getOrCreate(fn *domain.Function) (*pool.DockerPool, error
 
 	p, err := pool.NewDockerPool(cfg, baseImageForRuntime(fn.Runtime))
 	if err != nil {
+		r.mu.Unlock()
 		return nil, fmt.Errorf("create pool for function %s: %w", fn.ID, err)
 	}
 
@@ -139,9 +139,12 @@ func (r *PoolRegistry) getOrCreate(fn *domain.Function) (*pool.DockerPool, error
 	if svcCtx == nil {
 		svcCtx = context.Background()
 	}
-	p.Start(svcCtx)
-
+	// Insert entry before releasing lock so concurrent callers for the same
+	// function find it immediately. Start() is called after unlocking to avoid
+	// holding the lock across the expensive MinSize container fill.
 	r.entries[fn.ID] = &functionEntry{codeKey: codeKey, p: p}
+	r.mu.Unlock() // ← release before the blocking Start
+	p.Start(svcCtx)
 	return p, nil
 }
 
