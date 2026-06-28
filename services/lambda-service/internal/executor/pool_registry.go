@@ -43,7 +43,9 @@ func NewPoolRegistry(cfg pool.PoolConfig, storage domain.CodeStorage, docker *do
 // Start stores the service context so that lazily-created pools bind their
 // lifecycle goroutines to the service lifetime.
 func (r *PoolRegistry) Start(ctx context.Context) {
+	r.mu.Lock()
 	r.serviceCtx = ctx
+	r.mu.Unlock()
 }
 
 // Acquire returns a warm container for fn, creating a per-function pool if needed.
