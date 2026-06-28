@@ -28,8 +28,8 @@ vendor/
 # OS
 .DS_Store
 
-# Superpowers (local planning docs — not for PRs)
-docs/superpowers/
+# Local planning docs — not for PRs
+docs/
 .superpowers/
 
 # Terraform
