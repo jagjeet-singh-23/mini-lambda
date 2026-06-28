@@ -21,7 +21,7 @@ type fakeFunctionService struct {
 	lastID  string
 }
 
-func (f *fakeFunctionService) GetFunction(ctx context.Context, id string) (*domain.Function, error) {
+func (f *fakeFunctionService) GetFunctionMeta(ctx context.Context, id string) (*domain.Function, error) {
 	f.lastID = id
 	if f.getErr != nil {
 		return nil, f.getErr

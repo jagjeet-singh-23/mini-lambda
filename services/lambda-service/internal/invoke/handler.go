@@ -14,7 +14,7 @@ import (
 )
 
 type FunctionService interface {
-	GetFunction(ctx context.Context, id string) (*domain.Function, error)
+	GetFunctionMeta(ctx context.Context, id string) (*domain.Function, error)
 	SaveExecution(ctx context.Context, execution *domain.Execution) error
 }
 
@@ -66,7 +66,7 @@ func (h *Handler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	function, err := h.functions.GetFunction(r.Context(), functionID)
+	function, err := h.functions.GetFunctionMeta(r.Context(), functionID)
 	if err != nil {
 		if errors.Is(err, domain.ErrFunctionNotFound) {
 			http.Error(w, "Function not found", http.StatusNotFound)
