@@ -97,13 +97,13 @@ func (r *DockerRuntime) executeWithPool(
 	m := &ExecutionMetrics{}
 	totalTimer := NewTimer()
 
-	c, wasWarmStart, err := r.acquireContainer(ctx, function, m)
+	c, p, wasWarmStart, err := r.acquireContainer(ctx, function, m)
 	if err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		r.releaseContainer(ctx, function, c, m)
+		r.releaseContainer(ctx, c, p, m)
 		m.TotalTime = totalTimer.Elapsed()
 		fmt.Println(m.String())
 		if r.metricsCollector != nil {
@@ -128,12 +128,12 @@ func (r *DockerRuntime) acquireContainer(
 	ctx context.Context,
 	function *domain.Function,
 	m *ExecutionMetrics,
-) (*pool.Container, bool, error) {
+) (*pool.Container, *pool.DockerPool, bool, error) {
 	poolTimer := NewTimer()
-	c, err := r.registry.Acquire(ctx, function)
+	c, p, err := r.registry.Acquire(ctx, function)
 	m.PoolAcquireTime = poolTimer.Elapsed()
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to acquire container: %w", err)
+		return nil, nil, false, fmt.Errorf("failed to acquire container: %w", err)
 	}
 	wasWarmStart := c.UseCount > 1
 	m.WasWarmStart = wasWarmStart
@@ -149,12 +149,12 @@ func (r *DockerRuntime) acquireContainer(
 			r.metricsCollector.RecordColdStart(r.runtimeType)
 		}
 	}
-	return c, wasWarmStart, nil
+	return c, p, wasWarmStart, nil
 }
 
-func (r *DockerRuntime) releaseContainer(ctx context.Context, function *domain.Function, c *pool.Container, m *ExecutionMetrics) {
+func (r *DockerRuntime) releaseContainer(ctx context.Context, c *pool.Container, p *pool.DockerPool, m *ExecutionMetrics) {
 	releaseTimer := NewTimer()
-	if err := r.registry.Release(ctx, function, c); err != nil {
+	if err := r.registry.Release(ctx, c, p); err != nil {
 		fmt.Printf("Failed to release container %s: %v\n", c.ID, err)
 	}
 	m.PoolReleaseTime = releaseTimer.Elapsed()
