@@ -80,8 +80,8 @@ func (r *DockerRuntime) Execute(
 	function *domain.Function,
 	input []byte,
 ) (*domain.ExecutionResult, error) {
-	if function.ID == "" || function.Runtime == "" {
-		return nil, fmt.Errorf("function ID and runtime are required")
+	if err := function.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid function: %w", err)
 	}
 	if err := r.ensureImage(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure image: %w", err)
@@ -336,26 +336,6 @@ func (r *DockerRuntime) ensureImage(ctx context.Context) error {
 	return err
 }
 
-func (r *DockerRuntime) parseDockerStream(reader io.Reader) ([]byte, error) {
-	var output bytes.Buffer
-	header := make([]byte, 8)
-	for {
-		if _, err := io.ReadFull(reader, header); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err
-		}
-		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
-		payload := make([]byte, size)
-		if _, err := io.ReadFull(reader, payload); err != nil {
-			break
-		}
-		output.Write(payload)
-	}
-	return output.Bytes(), nil
-}
-
 func (r *DockerRuntime) extractOutput(logs []byte) []byte {
 	if len(logs) == 0 {
 		return []byte("{}")
@@ -379,13 +359,15 @@ func (r *DockerRuntime) Start(ctx context.Context) {
 func (r *DockerRuntime) Cleanup() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := r.registry.Shutdown(shutdownCtx); err != nil {
-		return err
-	}
+	shutdownErr := r.registry.Shutdown(shutdownCtx)
+	var clientErr error
 	if r.client != nil {
-		return r.client.Close()
+		clientErr = r.client.Close()
 	}
-	return nil
+	if shutdownErr != nil {
+		return shutdownErr
+	}
+	return clientErr
 }
 
 // GetPoolStats returns stats for a specific function's pool.
