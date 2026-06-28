@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -19,12 +20,12 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
 )
 
-// DockerRuntime implements the Runtime interface using Docker
+// DockerRuntime implements the Runtime interface using Docker.
 type DockerRuntime struct {
 	runtimeType      string
 	baseImage        string
 	client           *client.Client
-	Pool             pool.ContainerPool
+	registry         *PoolRegistry
 	metricsCollector *metrics.MetricsCollector
 }
 
@@ -33,31 +34,27 @@ type logResult struct {
 	err  error
 }
 
-// NewDockerRuntime creates a new Docker-based runtime
+// NewDockerRuntime creates a new Docker-based runtime.
+// storage is used by the pool registry to download function code when seeding new containers.
 func NewDockerRuntime(
 	runtimeType, baseImage string,
 	metricsCollector *metrics.MetricsCollector,
 	poolCfg pool.PoolConfig,
+	storage domain.CodeStorage,
 ) (*DockerRuntime, error) {
 	if runtimeType == "" || baseImage == "" {
 		return nil, fmt.Errorf("runtime type and base image cannot be empty")
 	}
-
 	cli, err := initDockerClient()
 	if err != nil {
 		return nil, err
 	}
-
-	containerPool, err := initContainerPool(poolCfg, runtimeType, baseImage)
-	if err != nil {
-		return nil, err
-	}
-
+	sweepOrphanedContainers(context.Background(), cli)
 	return &DockerRuntime{
 		runtimeType:      runtimeType,
 		baseImage:        baseImage,
 		client:           cli,
-		Pool:             containerPool,
+		registry:         NewPoolRegistry(poolCfg, storage, cli),
 		metricsCollector: metricsCollector,
 	}, nil
 }
@@ -70,23 +67,12 @@ func initDockerClient() (*client.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
 	if _, err := cli.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("docker daemon not accessible: %w", err)
 	}
 	return cli, nil
-}
-
-func initContainerPool(cfg pool.PoolConfig, runtimeType, baseImage string) (pool.ContainerPool, error) {
-	cfg.Runtime = runtimeType
-	containerPool, err := pool.NewDockerPool(cfg, baseImage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create container pool: %w", err)
-	}
-	return containerPool, nil
 }
 
 func (r *DockerRuntime) Execute(
@@ -94,16 +80,12 @@ func (r *DockerRuntime) Execute(
 	function *domain.Function,
 	input []byte,
 ) (*domain.ExecutionResult, error) {
-	// Validate function
-	if err := function.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid function: %w", err)
+	if function.ID == "" || function.Runtime == "" {
+		return nil, fmt.Errorf("function ID and runtime are required")
 	}
-
-	// Ensure the base image exists locally
 	if err := r.ensureImage(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure image: %w", err)
 	}
-
 	return r.executeWithPool(ctx, function, input)
 }
 
@@ -112,61 +94,43 @@ func (r *DockerRuntime) executeWithPool(
 	function *domain.Function,
 	input []byte,
 ) (*domain.ExecutionResult, error) {
-	metrics := &ExecutionMetrics{}
+	m := &ExecutionMetrics{}
 	totalTimer := NewTimer()
 
-	container, wasWarmStart, err := r.acquireContainer(ctx, metrics)
+	c, wasWarmStart, err := r.acquireContainer(ctx, function, m)
 	if err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		r.releaseContainer(ctx, container, metrics)
-		metrics.TotalTime = totalTimer.Elapsed()
-		fmt.Println(metrics.String())
-
-		// Record metrics
+		r.releaseContainer(ctx, function, c, m)
+		m.TotalTime = totalTimer.Elapsed()
+		fmt.Println(m.String())
 		if r.metricsCollector != nil {
-			r.metricsCollector.RecordPoolAcquireTime(
-				r.runtimeType,
-				metrics.PoolAcquireTime,
-			)
-			r.metricsCollector.RecordCodeExecutionTime(
-				r.runtimeType,
-				metrics.CodeExecutionTime,
-			)
-			r.metricsCollector.RecordOutputReadTime(
-				r.runtimeType,
-				metrics.OutputReadTime,
-			)
-			// Record pool stats
-			r.metricsCollector.RecordPoolStats(r.runtimeType, r.Pool.Stats())
+			r.metricsCollector.RecordPoolAcquireTime(r.runtimeType, m.PoolAcquireTime)
+			r.metricsCollector.RecordCodeExecutionTime(r.runtimeType, m.CodeExecutionTime)
+			r.metricsCollector.RecordOutputReadTime(r.runtimeType, m.OutputReadTime)
+			if stats, ok := r.registry.PoolStats(function.ID); ok {
+				r.metricsCollector.RecordPoolStats(r.runtimeType, stats)
+			}
 		}
 	}()
 
-	result, err := r.executeInPooledContainer(
-		ctx,
-		container.ID,
-		function,
-		input,
-		metrics,
-	)
+	result, err := r.executeInPooledContainer(ctx, c.ID, function, input, m)
 	if err != nil {
 		return nil, err
 	}
-
-	// Add warm start indicator to result
 	result.WasWarmStart = wasWarmStart
-
 	return result, nil
 }
 
 func (r *DockerRuntime) acquireContainer(
 	ctx context.Context,
+	function *domain.Function,
 	m *ExecutionMetrics,
 ) (*pool.Container, bool, error) {
 	poolTimer := NewTimer()
-	c, err := r.Pool.Acquire(ctx)
+	c, err := r.registry.Acquire(ctx, function)
 	m.PoolAcquireTime = poolTimer.Elapsed()
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to acquire container: %w", err)
@@ -180,7 +144,7 @@ func (r *DockerRuntime) acquireContainer(
 			r.metricsCollector.RecordWarmStart(r.runtimeType)
 		}
 	} else {
-		fmt.Printf("❄️  COLD: Container %s (pool size: %d)\n", c.ID[:12], r.Pool.Size())
+		fmt.Printf("❄️  COLD: Container %s\n", c.ID[:12])
 		if r.metricsCollector != nil {
 			r.metricsCollector.RecordColdStart(r.runtimeType)
 		}
@@ -188,9 +152,9 @@ func (r *DockerRuntime) acquireContainer(
 	return c, wasWarmStart, nil
 }
 
-func (r *DockerRuntime) releaseContainer(ctx context.Context, c *pool.Container, m *ExecutionMetrics) {
+func (r *DockerRuntime) releaseContainer(ctx context.Context, function *domain.Function, c *pool.Container, m *ExecutionMetrics) {
 	releaseTimer := NewTimer()
-	if err := r.Pool.Release(ctx, c); err != nil {
+	if err := r.registry.Release(ctx, function, c); err != nil {
 		fmt.Printf("Failed to release container %s: %v\n", c.ID, err)
 	}
 	m.PoolReleaseTime = releaseTimer.Elapsed()
@@ -234,7 +198,9 @@ func (r *DockerRuntime) startExecInContainer(
 ) (string, types.HijackedResponse, error) {
 	createTimer := NewTimer()
 	execConfig := container.ExecOptions{
-		Cmd: r.buildExecutionCommand(f, input), AttachStderr: true, AttachStdout: true,
+		Cmd:          r.buildExecutionCommand(f, input),
+		AttachStderr: true,
+		AttachStdout: true,
 	}
 	exec, err := r.client.ContainerExecCreate(ctx, id, execConfig)
 	m.ExecCreateTime = createTimer.Elapsed()
@@ -258,10 +224,7 @@ func (r *DockerRuntime) startExecInContainer(
 	return exec.ID, resp, nil
 }
 
-// startAsyncLogRead starts reading logs asynchronously and returns a channel
-func (r *DockerRuntime) startAsyncLogRead(
-	resp types.HijackedResponse,
-) chan logResult {
+func (r *DockerRuntime) startAsyncLogRead(resp types.HijackedResponse) chan logResult {
 	resultCh := make(chan logResult, 1)
 	go func() {
 		defer resp.Close()
@@ -274,7 +237,6 @@ func (r *DockerRuntime) startAsyncLogRead(
 	return resultCh
 }
 
-// getAsyncLogs retrieves the result from async log reading
 func (r *DockerRuntime) getAsyncLogs(resultCh chan logResult) ([]byte, error) {
 	result, ok := <-resultCh
 	if !ok {
@@ -313,11 +275,7 @@ func (r *DockerRuntime) waitForExec(
 	}
 }
 
-func (r *DockerRuntime) collectExecResult(
-	logs []byte,
-	f *domain.Function,
-	exitCode int,
-) *domain.ExecutionResult {
+func (r *DockerRuntime) collectExecResult(logs []byte, f *domain.Function, exitCode int) *domain.ExecutionResult {
 	return &domain.ExecutionResult{
 		Output:     r.extractOutput(logs),
 		Logs:       logs,
@@ -326,51 +284,42 @@ func (r *DockerRuntime) collectExecResult(
 	}
 }
 
-func (r *DockerRuntime) buildExecutionCommand(
-	function *domain.Function,
-	input []byte,
-) []string {
+// buildExecutionCommand builds the docker exec command.
+// Code is NOT embedded — it is already on disk at /tmp/handler.py (or .js).
+// Only the event (base64-encoded) is passed inline.
+func (r *DockerRuntime) buildExecutionCommand(function *domain.Function, input []byte) []string {
 	encodedInput := base64.StdEncoding.EncodeToString(input)
-	encodedCode := base64.StdEncoding.EncodeToString(function.Code)
-
 	switch r.runtimeType {
 	case "python3.9", "python3.11":
-		return []string{"python3", "-c", r.getPythonExecScript(encodedCode, encodedInput)}
+		return []string{"python3", "-c", r.getPythonExecScript(encodedInput)}
 	case "nodejs18", "nodejs20":
-		return []string{"node", "-e", r.getNodeExecScript(encodedCode, encodedInput)}
+		return []string{"node", "-e", r.getNodeExecScript(encodedInput)}
 	default:
-		return []string{"sh", "-c", string(function.Code)}
+		return []string{"sh", "/tmp/handler.sh"}
 	}
 }
 
-func (r *DockerRuntime) getPythonExecScript(code, input string) string {
+func (r *DockerRuntime) getPythonExecScript(encodedInput string) string {
 	return fmt.Sprintf(`
-import base64, json, sys
-code = base64.b64decode('%s').decode('utf-8')
+import json, sys, base64
+exec(open('/tmp/handler.py').read())
 event = {}
 try:
-    input_data = base64.b64decode('%s').decode('utf-8')
-    if input_data: event = json.loads(input_data)
+    data = base64.b64decode('%s').decode('utf-8')
+    if data: event = json.loads(data)
 except: pass
-exec(code)
 if 'handler' in dir():
     print(json.dumps(handler(event, {})))
-`, code, input)
+`, encodedInput)
 }
 
-func (r *DockerRuntime) getNodeExecScript(code, input string) string {
+func (r *DockerRuntime) getNodeExecScript(encodedInput string) string {
 	return fmt.Sprintf(`
-const code = Buffer.from('%s', 'base64').toString('utf-8');
-let event = {};
-try {
-    const input = Buffer.from('%s', 'base64').toString('utf-8');
-    if (input) event = JSON.parse(input);
-} catch(e) {}
-eval(code);
-if (typeof handler === 'function') {
-    Promise.resolve(handler(event, {})).then(res => console.log(JSON.stringify(res)));
-}
-`, code, input)
+const fs = require('fs');
+eval(fs.readFileSync('/tmp/handler.js', 'utf-8'));
+const event = JSON.parse(Buffer.from('%s', 'base64').toString('utf-8') || '{}');
+Promise.resolve(typeof handler === 'function' ? handler(event, {}) : {}).then(r => console.log(JSON.stringify(r)));
+`, encodedInput)
 }
 
 func (r *DockerRuntime) ensureImage(ctx context.Context) error {
@@ -378,15 +327,11 @@ func (r *DockerRuntime) ensureImage(ctx context.Context) error {
 	if err == nil {
 		return nil
 	}
-
-	// Image doesn't exists, pull it
 	reader, err := r.client.ImagePull(ctx, r.baseImage, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
-
 	defer reader.Close()
-
 	_, err = io.Copy(io.Discard, reader)
 	return err
 }
@@ -394,7 +339,6 @@ func (r *DockerRuntime) ensureImage(ctx context.Context) error {
 func (r *DockerRuntime) parseDockerStream(reader io.Reader) ([]byte, error) {
 	var output bytes.Buffer
 	header := make([]byte, 8)
-
 	for {
 		if _, err := io.ReadFull(reader, header); err != nil {
 			if err == io.EOF {
@@ -402,7 +346,6 @@ func (r *DockerRuntime) parseDockerStream(reader io.Reader) ([]byte, error) {
 			}
 			return nil, err
 		}
-
 		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
 		payload := make([]byte, size)
 		if _, err := io.ReadFull(reader, payload); err != nil {
@@ -410,43 +353,34 @@ func (r *DockerRuntime) parseDockerStream(reader io.Reader) ([]byte, error) {
 		}
 		output.Write(payload)
 	}
-
 	return output.Bytes(), nil
 }
 
-// extractOutput extracts just the last line (the function result)
 func (r *DockerRuntime) extractOutput(logs []byte) []byte {
 	if len(logs) == 0 {
 		return []byte("{}")
 	}
-
-	// Split by newlines and get the last non-empty line
 	lines := bytes.Split(logs, []byte("\n"))
-
-	// Find last non-empty line
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := bytes.TrimSpace(lines[i])
 		if len(line) > 0 {
 			return line
 		}
 	}
-
-	// If no output, return the full logs
 	return logs
 }
 
+// Start propagates the service context into the pool registry.
 func (r *DockerRuntime) Start(ctx context.Context) {
-	r.Pool.Start(ctx)
+	r.registry.Start(ctx)
 }
 
 // Cleanup implements the Runtime interface.
 func (r *DockerRuntime) Cleanup() error {
-	if r.Pool != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := r.Pool.Shutdown(shutdownCtx); err != nil {
-			return err
-		}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.registry.Shutdown(shutdownCtx); err != nil {
+		return err
 	}
 	if r.client != nil {
 		return r.client.Close()
@@ -454,10 +388,21 @@ func (r *DockerRuntime) Cleanup() error {
 	return nil
 }
 
-// GetPoolStats returns statistics about the container pool
-func (r *DockerRuntime) GetPoolStats() domain.PoolStats {
-	if r.Pool != nil {
-		return r.Pool.Stats()
+// GetPoolStats returns stats for a specific function's pool.
+func (r *DockerRuntime) GetPoolStats(functionID string) (domain.PoolStats, bool) {
+	return r.registry.PoolStats(functionID)
+}
+
+// sweepOrphanedContainers removes containers left running from a previous (possibly
+// crashed) process, identified by the mini-lambda.managed label set at creation.
+// Called once at startup; non-fatal on error.
+func sweepOrphanedContainers(ctx context.Context, docker *client.Client) {
+	f := filters.NewArgs(filters.Arg("label", "mini-lambda.managed=true"))
+	containers, err := docker.ContainerList(ctx, container.ListOptions{Filters: f})
+	if err != nil {
+		return
 	}
-	return domain.PoolStats{}
+	for _, c := range containers {
+		docker.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+	}
 }

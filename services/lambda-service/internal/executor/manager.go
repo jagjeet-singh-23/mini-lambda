@@ -75,6 +75,7 @@ func (m *Manager) registerDefaultRuntimes() error {
 				config.baseImage,
 				m.metricsCollector,
 				m.poolCfg,
+				m.s3Storage,
 			)
 		}
 
