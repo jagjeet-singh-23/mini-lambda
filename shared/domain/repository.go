@@ -127,6 +127,16 @@ func (s *FunctionService) GetFunction(
 	return function, nil
 }
 
+// GetFunctionMeta returns function metadata without downloading code from S3.
+// Function.Code contains the raw S3 key, not code bytes.
+// Use this on the hot invocation path — code is already on disk in the container.
+func (s *FunctionService) GetFunctionMeta(
+	ctx context.Context,
+	id string,
+) (*Function, error) {
+	return s.repo.FindByID(ctx, id)
+}
+
 func (s *FunctionService) UpdateFunction(
 	ctx context.Context,
 	function *Function,
