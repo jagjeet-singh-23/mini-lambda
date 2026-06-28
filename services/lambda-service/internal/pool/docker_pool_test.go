@@ -178,3 +178,42 @@ func TestDockerPool_TTLEvictionAndReplenishment(t *testing.T) {
 	}
 	p.Release(ctx, c2)
 }
+
+// TestDockerPool_SeedFuncCalledOnCreate verifies that SeedFunc is invoked for
+// each new container and that the returned code key is stored on the Container.
+func TestDockerPool_SeedFuncCalledOnCreate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires docker")
+	}
+	ctx := context.Background()
+
+	const wantKey = "functions/fn-test/v1"
+	calls := 0
+	cfg := testCfg(0, 1, 5*time.Minute, 30*time.Second)
+	cfg.SeedFunc = func(_ context.Context, _ string) (string, error) {
+		calls++
+		return wantKey, nil
+	}
+
+	p, err := pool.NewDockerPool(cfg, "alpine")
+	if err != nil {
+		t.Fatalf("NewDockerPool: %v", err)
+	}
+	defer p.Shutdown(context.Background())
+
+	if _, err := p.CreateNew(ctx); err != nil {
+		t.Fatalf("CreateNew: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("SeedFunc called %d times, want 1", calls)
+	}
+
+	c, err := p.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if c.CodeKey != wantKey {
+		t.Errorf("Container.CodeKey = %q, want %q", c.CodeKey, wantKey)
+	}
+	p.Release(ctx, c)
+}

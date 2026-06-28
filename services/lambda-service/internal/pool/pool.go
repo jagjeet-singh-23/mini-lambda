@@ -10,6 +10,7 @@ import (
 type Container struct {
 	ID         string
 	Runtime    string
+	CodeKey    string    // S3 key of the code written to this container; empty if unseeded
 	CreatedAt  time.Time
 	LastUsed   time.Time
 	UseCount   int64
@@ -75,6 +76,10 @@ type PoolConfig struct {
 	MaxIdleTime  time.Duration
 	MaxUseCount  int64
 	TickInterval time.Duration
+	// SeedFunc is called after each new container starts to write function code
+	// to the container filesystem. Returns the code key that was written.
+	// If nil, no seeding is performed (Kubernetes pools, tests without seeding).
+	SeedFunc func(ctx context.Context, containerID string) (codeKey string, err error)
 }
 
 func DefaultPoolConfig(runtime string) PoolConfig {

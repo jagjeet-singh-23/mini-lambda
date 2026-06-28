@@ -227,8 +227,20 @@ func (p *DockerPool) enqueueNew(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create docker container: %w", err)
 	}
+
+	var codeKey string
+	if p.config.SeedFunc != nil {
+		var seedErr error
+		codeKey, seedErr = p.config.SeedFunc(ctx, id)
+		if seedErr != nil {
+			p.stopDockerContainer(ctx, id) // don't leak unseeded containers
+			return fmt.Errorf("seed container: %w", seedErr)
+		}
+	}
+
 	c := &Container{
 		ID:        id,
+		CodeKey:   codeKey,
 		Runtime:   p.config.Runtime,
 		CreatedAt: time.Now(),
 		LastUsed:  time.Now(),
@@ -308,6 +320,9 @@ func (p *DockerPool) createDockerContainer(ctx context.Context) (string, error) 
 		Image:      p.baseImage,
 		WorkingDir: "/tmp",
 		Cmd:        []string{"tail", "-f", "/dev/null"},
+		Labels: map[string]string{
+			"mini-lambda.managed": "true",
+		},
 	}
 	hostCfg := &container.HostConfig{
 		Resources: container.Resources{
