@@ -30,6 +30,11 @@ func (g *Gateway) HandleBuildLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clear write deadline — SSE connections are long-lived (up to 30 min).
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -73,7 +78,7 @@ func (g *Gateway) HandleBuildLogs(w http.ResponseWriter, r *http.Request) {
 
 		for _, msg := range streams[0].Messages {
 			logLine, _ := msg.Values["log"].(string)
-			fmt.Fprintf(w, "data: %s\n\n", logLine)
+			fmt.Fprintf(w, "data: %s\n\n", strings.ReplaceAll(logLine, "\n", " "))
 			flusher.Flush()
 			lastID = msg.ID
 
