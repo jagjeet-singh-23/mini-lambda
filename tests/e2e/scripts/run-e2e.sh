@@ -6,6 +6,10 @@ cd "$REPO_ROOT"
 
 BUCKET="mini-lambda"
 
+echo "==> Detecting Docker socket group GID..."
+export DOCKER_SOCK_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.20 stat -c '%g' /var/run/docker.sock)
+echo "    DOCKER_SOCK_GID=${DOCKER_SOCK_GID}"
+
 echo "==> Starting infrastructure services..."
 docker compose up -d --build postgres redis-cache rabbitmq minio db-migrator git-fixture
 
