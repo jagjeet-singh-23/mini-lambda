@@ -80,9 +80,9 @@ func createFunction(t *testing.T, userID string, req map[string]interface{}) (jo
 
 // assertBuildCompletes concurrently reads the job's SSE log stream from the
 // gateway and directly XRANGEs the same Redis stream, and requires both to
-// observe a terminal sentinel containing wantSentinelSubstr — so a failure
-// can be localized to the write side (worker/builder) or the read side
-// (gateway's SSE proxy) instead of just "no logs showed up".
+// observe a terminal sentinel containing wantSentinelSubstr — so a
+// gateway-proxy-specific failure (Redis has the sentinel, SSE doesn't) can be
+// distinguished from a write-side failure (neither side ever sees one).
 func assertBuildCompletes(t *testing.T, jobID, wantSentinelSubstr string) {
 	t.Helper()
 
