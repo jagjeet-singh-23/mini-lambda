@@ -7,7 +7,7 @@ networks:
 
 volumes:
   postgres-data:
-  redis-data:
+  redis-cache-data:
   minio-data:
   rabbitmq-data:
   prometheus-data:
@@ -119,13 +119,13 @@ services:
       SERVICE_NAME: gateway
       LOG_LEVEL: info
       POSTGRES_HOST: postgres
-      REDIS_ADDR: redis:6379
+      REDIS_ADDR: redis-cache:6379
       BUILD_SERVICE_URL: http://build-master:8082
       LAMBDA_SERVICE_URL: http://lambda-service:8081
     depends_on:
       db-migrator:
         condition: service_completed_successfully
-      redis:
+      redis-cache:
         condition: service_healthy
     networks:
       - mini-lambda
@@ -215,7 +215,7 @@ services:
       LOG_LEVEL: info
       POSTGRES_HOST: postgres
       POSTGRES_DB: mini_lambda
-      REDIS_ADDR: redis:6379
+      REDIS_ADDR: redis-cache:6379
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       S3_ENDPOINT: http://minio:9000
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -224,7 +224,7 @@ services:
     depends_on:
       db-migrator:
         condition: service_completed_successfully
-      redis:
+      redis-cache:
         condition: service_healthy
       minio:
         condition: service_healthy
