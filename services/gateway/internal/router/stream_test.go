@@ -108,6 +108,12 @@ func TestHandleBuildLogsSSEHeadersSet(t *testing.T) {
 	if resp.Header.Get("Cache-Control") != "no-cache" {
 		t.Fatalf("Cache-Control = %q, want no-cache", resp.Header.Get("Cache-Control"))
 	}
+	if resp.Header.Get("Connection") != "keep-alive" {
+		t.Fatalf("Connection = %q, want keep-alive", resp.Header.Get("Connection"))
+	}
+	if resp.Header.Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("X-Accel-Buffering = %q, want no", resp.Header.Get("X-Accel-Buffering"))
+	}
 }
 
 func TestHandleBuildLogsStreamsLinesAndClosesOnDone(t *testing.T) {
