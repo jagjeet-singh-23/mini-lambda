@@ -3,80 +3,95 @@ package router
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 	"github.com/redis/go-redis/v9"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true }, // Allow all origins for POC
-}
-
-// HandleStreamLogs upgrades an HTTP request to a WebSocket and streams Redis build logs.
-func (g *Gateway) HandleStreamLogs(w http.ResponseWriter, r *http.Request) {
-	jobID := r.URL.Query().Get("job_id")
-	if jobID == "" {
-		http.Error(w, "Missing job_id parameter", http.StatusBadRequest)
+// HandleBuildLogs streams build log lines from Redis as Server-Sent Events.
+// Path: GET /jobs/{job_id}/logs
+func (g *Gateway) HandleBuildLogs(w http.ResponseWriter, r *http.Request) {
+	jobID, ok := parseBuildLogsPath(r.URL.Path)
+	if !ok {
+		http.Error(w, "invalid path: expected /jobs/{job_id}/logs", http.StatusBadRequest)
 		return
 	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		logger.Error("Failed to upgrade websocket", "error", err)
-		return
-	}
-	defer conn.Close()
 
 	if g.redisClient == nil {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte("Error: Gateway Redis streaming client is not configured."))
+		http.Error(w, "log streaming unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	streamName := fmt.Sprintf("build_logs:%s", jobID)
-	ctx := r.Context()
-	lastID := "0-0"
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
 
-	// Watch the Redis Stream for new logs
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ctx := r.Context()
+	streamName := fmt.Sprintf("build_logs:%s", jobID)
+	lastID := "0-0"
+	deadline := time.Now().Add(30 * time.Minute)
+
 	for {
+		if time.Now().After(deadline) {
+			return
+		}
 		select {
 		case <-ctx.Done():
-			return // Client disconnected
+			return
 		default:
 		}
 
-		// Block for 2 seconds waiting for new log entries
 		streams, err := g.redisClient.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{streamName, lastID},
 			Count:   10,
-			Block:   2 * time.Second,
+			Block:   5 * time.Second,
 		}).Result()
 
 		if err != nil {
 			if err == redis.Nil {
-				continue // No new messages, keep waiting
+				continue
 			}
-			logger.Error("Failed to read from Redis Stream", "error", err)
+			if ctx.Err() != nil {
+				return
+			}
+			logger.Error("SSE: Redis read error", "job_id", jobID, "error", err)
 			return
 		}
 
-		if len(streams) > 0 && len(streams[0].Messages) > 0 {
-			for _, msg := range streams[0].Messages {
-				logStr := msg.Values["log"].(string)
+		if len(streams) == 0 || len(streams[0].Messages) == 0 {
+			continue
+		}
 
-				// Stream log payload to client
-				if err := conn.WriteMessage(websocket.TextMessage, []byte(logStr)); err != nil {
-					return // Client disconnected
-				}
-				lastID = msg.ID
+		for _, msg := range streams[0].Messages {
+			logLine, _ := msg.Values["log"].(string)
+			fmt.Fprintf(w, "data: %s\n\n", logLine)
+			flusher.Flush()
+			lastID = msg.ID
 
-				// Terminate stream if build completes or fails
-				if logStr == "Build completed successfully!" || len(logStr) > 4 && logStr[:4] == "ERR:" {
-					_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-					return
-				}
+			if logLine == "__BUILD_DONE__" || strings.HasPrefix(logLine, "__BUILD_FAILED__:") {
+				return
 			}
 		}
 	}
+}
+
+// parseBuildLogsPath extracts job_id from /jobs/{job_id}/logs.
+func parseBuildLogsPath(path string) (string, bool) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 3 || parts[0] != "jobs" || parts[2] != "logs" {
+		return "", false
+	}
+	if parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
 }
