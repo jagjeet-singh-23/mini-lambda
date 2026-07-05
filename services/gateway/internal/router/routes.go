@@ -29,8 +29,8 @@ func (g *Gateway) SetupRoutes() *http.ServeMux {
 		}
 	})
 
-	// Streaming Build Logs WebSocket
-	mux.HandleFunc("/stream", g.HandleStreamLogs)
+	// Build log streaming (SSE)
+	mux.HandleFunc("/jobs/", g.HandleBuildLogs)
 
 	// Health check
 	mux.HandleFunc("/health", g.HandleHealth)
