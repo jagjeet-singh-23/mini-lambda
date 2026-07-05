@@ -186,7 +186,7 @@ services:
       dockerfile: services/build-service/Dockerfile.worker
     image: ghcr.io/${GITHUB_USER}/build-worker:latest
     group_add:
-      - "984"
+      - "${DOCKER_SOCK_GID:-984}"
     environment:
       SERVICE_NAME: build-worker
       LOG_LEVEL: info
@@ -219,7 +219,7 @@ services:
     image: ghcr.io/${GITHUB_USER}/lambda-service:latest
     container_name: mini-lambda-lambda-service
     group_add:
-      - "984"
+      - "${DOCKER_SOCK_GID:-984}"
     ports:
       - "8081:8081"
     environment:
