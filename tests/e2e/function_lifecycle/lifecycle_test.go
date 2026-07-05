@@ -2,17 +2,36 @@ package function_lifecycle_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"testing"
 	"time"
+
+	"github.com/jagjeet-singh-23/mini-lambda/tests/e2e/testsupport"
 )
 
 const (
 	gatewayURL = "http://localhost:8080"
 )
+
+func TestMain(m *testing.M) {
+	flag.Parse()
+	if !testing.Short() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := testsupport.WaitForGatewayHealthy(ctx, gatewayURL); err != nil {
+			fmt.Fprintln(os.Stderr, "e2e setup failed:", err)
+			os.Exit(1)
+		}
+	}
+	os.Exit(m.Run())
+}
 
 // TestFunctionLifecycle_CreateFunction tests the complete function creation flow
 func TestFunctionLifecycle_CreateFunction(t *testing.T) {
@@ -184,7 +203,8 @@ func TestRateLimiting(t *testing.T) {
 
 // createTestPackage creates a simple test ZIP package
 func createTestPackage(t *testing.T) []byte {
-	// For now, return empty bytes
-	// In a real test, this would create a proper ZIP file with Python code
-	return []byte{}
+	t.Helper()
+	return testsupport.BuildZip(map[string]string{
+		"index.py": "def handler(event, context):\n    return {\"message\": \"hello from e2e test\"}\n",
+	})
 }
