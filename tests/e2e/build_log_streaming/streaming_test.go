@@ -236,3 +236,41 @@ func TestBuildLogs_Zip_Failure(t *testing.T) {
 
 	assertBuildCompletes(t, jobID, "__BUILD_FAILED__:")
 }
+
+func TestBuildLogs_Docker_Success(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test")
+	}
+
+	jobID, _ := createFunction(t, "e2e-docker-success", map[string]interface{}{
+		"name":        uniqueName("e2e-docker-success"),
+		"runtime":     "container",
+		"handler":     "",
+		"repo_url":    "http://git-fixture/docker-build-repo.git",
+		"dockerfile":  "",
+		"webhook_url": "",
+		"timeout":     30,
+		"memory":      128,
+	})
+
+	assertBuildCompletes(t, jobID, "__BUILD_DONE__")
+}
+
+func TestBuildLogs_Docker_Failure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test")
+	}
+
+	jobID, _ := createFunction(t, "e2e-docker-failure", map[string]interface{}{
+		"name":        uniqueName("e2e-docker-failure"),
+		"runtime":     "container",
+		"handler":     "",
+		"repo_url":    "http://git-fixture/docker-build-repo-broken.git",
+		"dockerfile":  "",
+		"webhook_url": "",
+		"timeout":     30,
+		"memory":      128,
+	})
+
+	assertBuildCompletes(t, jobID, "__BUILD_FAILED__:")
+}
