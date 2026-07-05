@@ -7,7 +7,12 @@ cd "$REPO_ROOT"
 BUCKET="mini-lambda"
 
 echo "==> Detecting Docker socket group GID..."
-export DOCKER_SOCK_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.20 stat -c '%g' /var/run/docker.sock)
+DOCKER_SOCK_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.20 stat -c '%g' /var/run/docker.sock)
+if [ -z "$DOCKER_SOCK_GID" ]; then
+  echo "ERROR: failed to detect Docker socket GID" >&2
+  exit 1
+fi
+export DOCKER_SOCK_GID
 echo "    DOCKER_SOCK_GID=${DOCKER_SOCK_GID}"
 
 echo "==> Starting infrastructure services..."
