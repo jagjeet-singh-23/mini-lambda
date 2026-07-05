@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/jagjeet-singh-23/mini-lambda/shared/buildlog"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 	"github.com/redis/go-redis/v9"
 )
@@ -77,18 +78,12 @@ func (d *DockerBuilder) CloneAndBuild(ctx context.Context, jobID, functionID, re
 	return imageURI, nil
 }
 
-// streamLog writes a raw string message directly to the Redis stream
+// streamLog writes a log line to the job's Redis stream via shared/buildlog,
+// which enforces the same MaxLen cap the worker's zip path uses.
 func (d *DockerBuilder) streamLog(ctx context.Context, jobID, message string) {
-	if d.redisClient == nil {
-		return // Silently skip if no redis configured
+	if err := buildlog.Append(ctx, d.redisClient, jobID, message); err != nil {
+		logger.Warn("streamLog: failed to write to Redis stream", "job_id", jobID, "error", err)
 	}
-	streamName := fmt.Sprintf("build_logs:%s", jobID)
-	d.redisClient.XAdd(ctx, &redis.XAddArgs{
-		Stream: streamName,
-		Values: map[string]interface{}{
-			"log": message,
-		},
-	})
 	logger.Info("[BUILDER STREAM]", "job", jobID, "msg", message)
 }
 
