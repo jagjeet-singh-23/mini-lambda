@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jagjeet-singh-23/mini-lambda/shared/buildlog"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 	"github.com/redis/go-redis/v9"
 )
@@ -41,7 +42,7 @@ func (g *Gateway) HandleBuildLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	ctx := r.Context()
-	streamName := fmt.Sprintf("build_logs:%s", jobID)
+	streamName := buildlog.StreamKey(jobID)
 	lastID := "0-0"
 	deadline := time.Now().Add(30 * time.Minute)
 
