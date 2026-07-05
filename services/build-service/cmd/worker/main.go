@@ -34,10 +34,12 @@ func streamBuildLog(ctx context.Context, rc *redis.Client, jobID, message string
 	if rc == nil {
 		return
 	}
-	rc.XAdd(ctx, &redis.XAddArgs{
+	if err := rc.XAdd(ctx, &redis.XAddArgs{
 		Stream: fmt.Sprintf("build_logs:%s", jobID),
 		Values: map[string]interface{}{"log": message},
-	})
+	}).Err(); err != nil {
+		logger.Warn("streamBuildLog: failed to write to Redis stream", "job_id", jobID, "error", err)
+	}
 }
 
 func main() {
