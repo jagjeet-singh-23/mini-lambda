@@ -88,6 +88,14 @@ services:
       timeout: 20s
       retries: 3
 
+  git-fixture:
+    build:
+      context: ./tests/e2e/fixtures
+      dockerfile: git-fixture.Dockerfile
+    container_name: mini-lambda-git-fixture
+    networks:
+      - mini-lambda
+
   db-migrator:
     image: migrate/migrate:v4.16.2
     container_name: mini-lambda-db-migrator
