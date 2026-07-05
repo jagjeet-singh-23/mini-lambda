@@ -14,6 +14,7 @@ import (
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/builder"
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/queue"
 	"github.com/jagjeet-singh-23/mini-lambda/services/build-service/internal/storage"
+	"github.com/jagjeet-singh-23/mini-lambda/shared/buildlog"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/logger"
 	"github.com/jagjeet-singh-23/mini-lambda/shared/metrics"
@@ -30,27 +31,28 @@ type workerDeps struct {
 	publisher       *queue.Publisher
 }
 
+const buildLogTTL = 4 * time.Hour
+
 func streamBuildLog(ctx context.Context, rc *redis.Client, jobID, message string) {
-	if rc == nil {
-		return
-	}
-	if err := rc.XAdd(ctx, &redis.XAddArgs{
-		Stream: fmt.Sprintf("build_logs:%s", jobID),
-		MaxLen: 1000,
-		Approx: true,
-		Values: map[string]interface{}{"log": message},
-	}).Err(); err != nil {
+	if err := buildlog.Append(ctx, rc, jobID, message); err != nil {
 		logger.Warn("streamBuildLog: failed to write to Redis stream", "job_id", jobID, "error", err)
 	}
 }
 
 func expireBuildLog(ctx context.Context, rc *redis.Client, jobID string) {
-	if rc == nil {
-		return
-	}
-	if err := rc.Expire(ctx, fmt.Sprintf("build_logs:%s", jobID), 4*time.Hour).Err(); err != nil {
+	if err := buildlog.Expire(ctx, rc, jobID, buildLogTTL); err != nil {
 		logger.Warn("expireBuildLog: failed to set TTL", "job_id", jobID, "error", err)
 	}
+}
+
+// failBuild logs the terminal failure sentinel, expires the log stream, and
+// returns the wrapped error via handleBuildFailureWithMetrics — collapsing
+// the repeated 3-line pattern every failure branch in processBuildJob needs.
+func failBuild(ctx context.Context, deps workerDeps, job *builder.BuildJob, startTime time.Time, format string, args ...interface{}) error {
+	msg := fmt.Sprintf(format, args...)
+	streamBuildLog(ctx, deps.rc, job.ID, "__BUILD_FAILED__: "+msg)
+	expireBuildLog(ctx, deps.rc, job.ID)
+	return handleBuildFailureWithMetrics(ctx, job, deps.webhookNotifier, msg, startTime)
 }
 
 func main() {
@@ -185,19 +187,13 @@ func processBuildJob(ctx context.Context, deps workerDeps, body []byte) error {
 
 		imageURI, err := deps.dockerBuilder.CloneAndBuild(ctx, job.ID, job.FunctionID, job.RepoURL, job.Dockerfile)
 		if err != nil {
-			msg := fmt.Sprintf("Docker build failed: %v", err)
-			streamBuildLog(ctx, deps.rc, job.ID, "__BUILD_FAILED__: "+msg)
-			expireBuildLog(ctx, deps.rc, job.ID)
-			return handleBuildFailureWithMetrics(ctx, &job, deps.webhookNotifier, msg, startTime)
+			return failBuild(ctx, deps, &job, startTime, "Docker build failed: %v", err)
 		}
 
 		// Save the ECR Image URI to S3 so lambda-service knows what to pull
 		_, err = deps.s3Storage.UploadPackage(ctx, job.FunctionID+"_imageuri", []byte(imageURI))
 		if err != nil {
-			msg := fmt.Sprintf("Failed to save image URI metadata: %v", err)
-			streamBuildLog(ctx, deps.rc, job.ID, "__BUILD_FAILED__: "+msg)
-			expireBuildLog(ctx, deps.rc, job.ID)
-			return handleBuildFailureWithMetrics(ctx, &job, deps.webhookNotifier, msg, startTime)
+			return failBuild(ctx, deps, &job, startTime, "Failed to save image URI metadata: %v", err)
 		}
 
 		logger.Info("GitHub Docker build completed", "image_uri", imageURI)
@@ -208,36 +204,24 @@ func processBuildJob(ctx context.Context, deps workerDeps, body []byte) error {
 		streamBuildLog(ctx, deps.rc, job.ID, "Downloading package from S3...")
 		packageData, err := deps.s3Storage.DownloadPackage(ctx, job.PackageURL)
 		if err != nil {
-			msg := fmt.Sprintf("Failed to download package: %v", err)
-			streamBuildLog(ctx, deps.rc, job.ID, "__BUILD_FAILED__: "+msg)
-			expireBuildLog(ctx, deps.rc, job.ID)
-			return handleBuildFailureWithMetrics(ctx, &job, deps.webhookNotifier, msg, startTime)
+			return failBuild(ctx, deps, &job, startTime, "Failed to download package: %v", err)
 		}
 
 		streamBuildLog(ctx, deps.rc, job.ID, "Validating ZIP package...")
 		if err := deps.zipProcessor.ValidatePackage(packageData); err != nil {
-			msg := fmt.Sprintf("Invalid package: %v", err)
-			streamBuildLog(ctx, deps.rc, job.ID, "__BUILD_FAILED__: "+msg)
-			expireBuildLog(ctx, deps.rc, job.ID)
-			return handleBuildFailureWithMetrics(ctx, &job, deps.webhookNotifier, msg, startTime)
+			return failBuild(ctx, deps, &job, startTime, "Invalid package: %v", err)
 		}
 
 		streamBuildLog(ctx, deps.rc, job.ID, "Extracting ZIP package...")
 		extractedDir, err := deps.zipProcessor.Process(ctx, packageData, job.FunctionID)
 		if err != nil {
-			msg := fmt.Sprintf("Failed to process package: %v", err)
-			streamBuildLog(ctx, deps.rc, job.ID, "__BUILD_FAILED__: "+msg)
-			expireBuildLog(ctx, deps.rc, job.ID)
-			return handleBuildFailureWithMetrics(ctx, &job, deps.webhookNotifier, msg, startTime)
+			return failBuild(ctx, deps, &job, startTime, "Failed to process package: %v", err)
 		}
 		defer deps.zipProcessor.Cleanup(job.FunctionID)
 
 		streamBuildLog(ctx, deps.rc, job.ID, "Uploading artifacts to S3...")
 		if err := deps.s3Storage.UploadDirectory(ctx, job.FunctionID, extractedDir); err != nil {
-			msg := fmt.Sprintf("Failed to upload artifacts: %v", err)
-			streamBuildLog(ctx, deps.rc, job.ID, "__BUILD_FAILED__: "+msg)
-			expireBuildLog(ctx, deps.rc, job.ID)
-			return handleBuildFailureWithMetrics(ctx, &job, deps.webhookNotifier, msg, startTime)
+			return failBuild(ctx, deps, &job, startTime, "Failed to upload artifacts: %v", err)
 		}
 
 		streamBuildLog(ctx, deps.rc, job.ID, "Publishing function.built event...")
