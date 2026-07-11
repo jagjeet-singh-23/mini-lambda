@@ -1,12 +1,11 @@
 package executor
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
@@ -66,6 +65,12 @@ func (r *PoolRegistry) Acquire(ctx context.Context, fn *domain.Function) (*pool.
 // Release returns c to the specific pool it was acquired from.
 func (r *PoolRegistry) Release(ctx context.Context, c *pool.Container, p *pool.DockerPool) error {
 	return p.Release(ctx, c)
+}
+
+// Discard force-stops and removes a container that cannot be safely returned to
+// the pool (e.g. a timed-out exec left a zombie process inside it).
+func (r *PoolRegistry) Discard(c *pool.Container, p *pool.DockerPool) {
+	p.Discard(c)
 }
 
 // PoolStats returns pool statistics for a specific function.
@@ -163,26 +168,57 @@ func (r *PoolRegistry) makeSeedFunc(runtime, codeKey string) func(ctx context.Co
 	}
 }
 
-// copyCodeToContainer writes code bytes to /tmp/<filename> in the container
-// using docker cp (CopyToContainer requires a tar archive).
+// copyCodeToContainer writes code bytes to /tmp/<filename> inside the container
+// by piping through a `cat` exec. CopyToContainer is not used because /tmp is a
+// tmpfs mount: docker cp writes to the overlay layer, which the tmpfs then hides.
+// Piping via exec writes directly to the running tmpfs.
 func copyCodeToContainer(ctx context.Context, docker *dockerclient.Client, containerID string, code []byte, runtime string) error {
 	filename := handlerFilename(runtime)
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	if err := tw.WriteHeader(&tar.Header{
-		Name: filename,
-		Size: int64(len(code)),
-		Mode: 0644,
-	}); err != nil {
-		return fmt.Errorf("tar header: %w", err)
+
+	exec, err := docker.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd:          []string{"sh", "-c", "cat > /tmp/" + filename},
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return fmt.Errorf("exec create for seeding: %w", err)
 	}
-	if _, err := tw.Write(code); err != nil {
-		return fmt.Errorf("tar write: %w", err)
+	resp, err := docker.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("exec attach for seeding: %w", err)
 	}
-	if err := tw.Close(); err != nil {
-		return fmt.Errorf("tar close: %w", err)
+	defer resp.Close()
+
+	if err := docker.ContainerExecStart(ctx, exec.ID, container.ExecStartOptions{}); err != nil {
+		return fmt.Errorf("exec start for seeding: %w", err)
 	}
-	return docker.CopyToContainer(ctx, containerID, "/tmp", bytes.NewReader(buf.Bytes()), container.CopyToContainerOptions{})
+	if _, err := resp.Conn.Write(code); err != nil {
+		return fmt.Errorf("write handler code: %w", err)
+	}
+	if err := resp.CloseWrite(); err != nil {
+		return fmt.Errorf("close write for seeding: %w", err)
+	}
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			info, err := docker.ContainerExecInspect(ctx, exec.ID)
+			if err != nil {
+				return fmt.Errorf("inspect seeding exec: %w", err)
+			}
+			if !info.Running {
+				if info.ExitCode != 0 {
+					return fmt.Errorf("seeding exec failed (exit %d)", info.ExitCode)
+				}
+				return nil
+			}
+		}
+	}
 }
 
 func handlerFilename(runtime string) string {

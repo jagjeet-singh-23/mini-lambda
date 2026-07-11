@@ -105,6 +105,23 @@ func (p *DockerPool) Acquire(ctx context.Context) (*Container, error) {
 	}
 }
 
+// Discard force-stops and removes a container that cannot safely be returned to
+// the idle pool (e.g. a timed-out exec left a zombie process running inside it).
+// Uses a fresh background context so a cancelled request context doesn't prevent
+// cleanup. Triggers replenishment to keep the pool at MinSize.
+func (p *DockerPool) Discard(c *Container) {
+	p.inUse.Delete(c.ID)
+	p.updateStats(func(m *poolMetrics) { m.totalEvictions++ })
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = p.stopDockerContainer(ctx, c.ID)
+		p.replenishOne(context.Background())
+	}()
+}
+
 // Release returns a container to the idle pool, or retires it if MaxUseCount is reached.
 func (p *DockerPool) Release(ctx context.Context, c *Container) error {
 	if c == nil {

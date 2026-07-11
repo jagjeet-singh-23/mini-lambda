@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -102,8 +103,16 @@ func (r *DockerRuntime) executeWithPool(
 		return nil, err
 	}
 
+	var execErr error
 	defer func() {
-		r.releaseContainer(ctx, c, p, m)
+		// A context error means the exec timed out or the request was cancelled
+		// while the exec was still running. The container may have a zombie
+		// process inside it and cannot safely be returned to the idle pool.
+		if errors.Is(execErr, context.DeadlineExceeded) || errors.Is(execErr, context.Canceled) {
+			r.registry.Discard(c, p)
+		} else {
+			r.releaseContainer(ctx, c, p, m)
+		}
 		m.TotalTime = totalTimer.Elapsed()
 		fmt.Println(m.String())
 		if r.metricsCollector != nil {
@@ -116,9 +125,10 @@ func (r *DockerRuntime) executeWithPool(
 		}
 	}()
 
-	result, err := r.executeInPooledContainer(ctx, c.ID, function, input, m)
-	if err != nil {
-		return nil, err
+	var result *domain.ExecutionResult
+	result, execErr = r.executeInPooledContainer(ctx, c.ID, function, input, m)
+	if execErr != nil {
+		return nil, execErr
 	}
 	result.WasWarmStart = wasWarmStart
 	return result, nil
