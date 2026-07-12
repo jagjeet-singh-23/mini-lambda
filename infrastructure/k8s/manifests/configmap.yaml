@@ -8,7 +8,6 @@ data:
   POSTGRES_HOST: "mini-lambda-postgres-prod.cv0egskwmy9k.ap-south-1.rds.amazonaws.com"
   POSTGRES_PORT: "5432"
   POSTGRES_USER: "postgres"
-  POSTGRES_PASSWORD: "CCfb9A7nhyswITBsS82Yq59xJNPvo48azgE+oo7WJY0="
   POSTGRES_DB: "mini_lambda"
   POSTGRES_SSLMODE: "require"
   REDIS_CACHE_ADDR: "mini-lambda-redis.pbdkl2.0001.aps1.cache.amazonaws.com:6379"
