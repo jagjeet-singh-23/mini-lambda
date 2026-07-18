@@ -57,7 +57,7 @@ func main() {
 	webhookNotifier := builder.NewWebhookNotifier()
 
 	// Initialize backpressure manager
-	backpressureManager := queue.NewBackpressureManager(publisher.GetConnection(), QueueName)
+	backpressureManager := queue.NewBackpressureManager(publisher, QueueName)
 
 	// Start monitoring queue depth
 	// using a background context that will be cancelled when the main function exits
