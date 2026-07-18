@@ -11,6 +11,7 @@ volumes:
   minio-data:
   rabbitmq-data:
   prometheus-data:
+  alertmanager-data:
   loki-data:
   grafana-data:
 
@@ -274,6 +275,34 @@ services:
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
+    networks:
+      - mini-lambda
+    restart: unless-stopped
+
+  # Alertmanager - Alert Routing & Notifications (Slack / Telegram)
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: mini-lambda-alertmanager
+    # Alertmanager has no native env var interpolation, so the config is
+    # rendered from a template before the binary starts. NOTE: the official
+    # prom/alertmanager image is busybox-based and does not ship envsubst
+    # (verified: `envsubst` is absent from /bin in this image), so we use an
+    # equivalent inline awk/ENVIRON substitution instead of `envsubst`.
+    entrypoint: >
+      sh -c "awk '{ while (match($0, /\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}/)) {
+      var = substr($0, RSTART+2, RLENGTH-3); val = ENVIRON[var];
+      $0 = substr($0,1,RSTART-1) val substr($0,RSTART+RLENGTH) } print }'
+      /etc/alertmanager/alertmanager.yml.tmpl > /etc/alertmanager/alertmanager.yml
+      && exec alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager"
+    environment:
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
     networks:
       - mini-lambda
     restart: unless-stopped
