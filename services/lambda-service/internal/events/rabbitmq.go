@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jagjeet-singh-23/mini-lambda/shared/domain"
+	sharedqueue "github.com/jagjeet-singh-23/mini-lambda/shared/queue"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -18,15 +19,31 @@ const (
 	dlqExchangeName = "mini-lambda-dlq"
 )
 
+// RabbitMQEventBus publishes and subscribes to domain events over RabbitMQ.
+//
+// If the underlying connection drops (broker restart, network blip, etc.)
+// the bus automatically redials in the background using a decorrelated
+// jitter backoff (base=500ms, cap=30s), re-declares the exchanges, and
+// re-establishes every active subscription's queue, binding, and consumer —
+// a fresh connection needs a fresh channel and fresh Consume()
+// registrations, since the old ones die with the connection. Callers don't
+// need to notice or restart the process for event processing to resume.
 type RabbitMQEventBus struct {
-	conn      *amqp.Connection
-	channel   *amqp.Channel
+	amqpURL string
+
+	connMu  sync.RWMutex
+	conn    *amqp.Connection
+	channel *amqp.Channel
+
 	processor EventProcessor
 	consumers map[string]*consumer
 	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+
+	backoff *sharedqueue.Backoff
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 type consumer struct {
@@ -50,6 +67,34 @@ func NewRabbitMQEventBus(
 		return nil, fmt.Errorf("failed to open a channel: %w", err)
 	}
 
+	if err := declareExchanges(ch); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	bus := &RabbitMQEventBus{
+		amqpURL:   amqpURL,
+		conn:      conn,
+		channel:   ch,
+		processor: processor,
+		consumers: make(map[string]*consumer),
+		backoff:   sharedqueue.NewBackoff(),
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+
+	go bus.handleConnectionErrors(conn)
+	log.Println("RabbitMQ event bus initialized successfully")
+
+	return bus, nil
+}
+
+// declareExchanges declares the topic exchange used for routing events and
+// the fanout DLQ exchange. It's used both on initial connect and after every
+// reconnect, since a fresh connection's channel has none of this state.
+func declareExchanges(ch *amqp.Channel) error {
 	if err := ch.ExchangeDeclare(
 		exchangeName,
 		exchangeType,
@@ -59,11 +104,9 @@ func NewRabbitMQEventBus(
 		false, //no-wait
 		nil,   //args
 	); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare exchange: %w", err)
+		return fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
-	// Declare DLQ exchange
 	if err := ch.ExchangeDeclare(
 		dlqExchangeName,
 		"fanout",
@@ -73,25 +116,22 @@ func NewRabbitMQEventBus(
 		false,
 		nil,
 	); err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare DLQ exchange: %w", err)
+		return fmt.Errorf("failed to declare DLQ exchange: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	bus := &RabbitMQEventBus{
-		conn:      conn,
-		channel:   ch,
-		processor: processor,
-		consumers: make(map[string]*consumer),
-		ctx:       ctx,
-		cancel:    cancel,
-	}
+	return nil
+}
 
-	go bus.handleConnectionErrors()
-	log.Println("RabbitMQ event bus initialized successfully")
+func (b *RabbitMQEventBus) getChannel() *amqp.Channel {
+	b.connMu.RLock()
+	defer b.connMu.RUnlock()
+	return b.channel
+}
 
-	return bus, nil
+func (b *RabbitMQEventBus) getConn() *amqp.Connection {
+	b.connMu.RLock()
+	defer b.connMu.RUnlock()
+	return b.conn
 }
 
 func (b *RabbitMQEventBus) Publish(
@@ -104,7 +144,7 @@ func (b *RabbitMQEventBus) Publish(
 	}
 
 	routingKey := string(event.Type)
-	err = b.channel.PublishWithContext(
+	err = b.getChannel().PublishWithContext(
 		ctx,
 		exchangeName,
 		routingKey,
@@ -144,7 +184,9 @@ func (b *RabbitMQEventBus) Subscribe(
 	queueName := fmt.Sprintf("function.%s%s", functionID, eventType)
 	routingKey := string(eventType)
 
-	q, err := b.channel.QueueDeclare(
+	ch := b.getChannel()
+
+	q, err := ch.QueueDeclare(
 		queueName,
 		true,  // durable,
 		false, // auto-delete,
@@ -158,7 +200,7 @@ func (b *RabbitMQEventBus) Subscribe(
 		return fmt.Errorf("failed to declare queue: %w", err)
 	}
 
-	if err := b.channel.QueueBind(
+	if err := ch.QueueBind(
 		q.Name,
 		routingKey,
 		exchangeName,
@@ -210,7 +252,7 @@ func (b *RabbitMQEventBus) Unsubscribe(
 		return fmt.Errorf("no subscription found for queue: %s", queueName)
 	}
 
-	_, err := b.channel.QueueDelete(queueName, false, false, false)
+	_, err := b.getChannel().QueueDelete(queueName, false, false, false)
 	if err != nil {
 		return fmt.Errorf("failed to delete queue: %w", err)
 	}
@@ -248,12 +290,14 @@ func (b *RabbitMQEventBus) Shutdown(ctx context.Context) error {
 		log.Println("Shutdown timeout, forcing stop")
 	}
 
-	if b.channel != nil {
-		b.channel.Close()
+	ch := b.getChannel()
+	if ch != nil {
+		ch.Close()
 	}
 
-	if b.conn != nil {
-		b.conn.Close()
+	conn := b.getConn()
+	if conn != nil {
+		conn.Close()
 	}
 
 	log.Println("Event bus shutdown complete")
@@ -263,7 +307,7 @@ func (b *RabbitMQEventBus) Shutdown(ctx context.Context) error {
 func (b *RabbitMQEventBus) consumeQueue(ctx context.Context, c *consumer) {
 	defer b.wg.Done()
 
-	msgs, err := b.channel.Consume(
+	msgs, err := b.getChannel().Consume(
 		c.queueName,
 		"",    // consumer tag
 		false, // auto-ack
@@ -326,17 +370,138 @@ func (b *RabbitMQEventBus) handleMessage(
 	msg.Ack(false)
 }
 
-func (b *RabbitMQEventBus) handleConnectionErrors() {
-	notifyClose := b.conn.NotifyClose(make(chan *amqp.Error))
-
+// handleConnectionErrors watches the given connection for closure and, once
+// it closes, reconnects (with decorrelated jitter backoff), re-declares the
+// exchanges, and re-establishes every active subscription. It then repeats,
+// watching the new connection, until the bus is shut down.
+func (b *RabbitMQEventBus) handleConnectionErrors(conn *amqp.Connection) {
 	for {
+		notifyClose := conn.NotifyClose(make(chan *amqp.Error, 1))
+
 		select {
 		case <-b.ctx.Done():
 			return
 		case err := <-notifyClose:
-			if err != nil {
-				log.Printf("Connection closed: %v", err)
+			log.Printf("RabbitMQ connection closed: %v — reconnecting", errString(err))
+		}
+
+		newConn, ok := b.reconnect()
+		if !ok {
+			// Bus was shut down while we were trying to reconnect.
+			return
+		}
+		conn = newConn
+	}
+}
+
+// reconnect retries dialing RabbitMQ, opening a channel, and re-declaring
+// the exchanges using decorrelated jitter backoff until it succeeds or the
+// bus is shut down. On success it swaps in the new connection/channel,
+// re-establishes every active subscription, and resets the backoff state.
+func (b *RabbitMQEventBus) reconnect() (*amqp.Connection, bool) {
+	for {
+		select {
+		case <-b.ctx.Done():
+			return nil, false
+		default:
+		}
+
+		conn, err := amqp.Dial(b.amqpURL)
+		if err == nil {
+			var ch *amqp.Channel
+			ch, err = conn.Channel()
+			if err == nil {
+				if declErr := declareExchanges(ch); declErr == nil {
+					b.connMu.Lock()
+					b.conn = conn
+					b.channel = ch
+					b.connMu.Unlock()
+
+					b.resubscribeAll(ch)
+					b.backoff.Reset()
+					log.Println("RabbitMQ event bus reconnected")
+					return conn, true
+				} else {
+					err = declErr
+				}
+				ch.Close()
 			}
+			conn.Close()
+		}
+
+		log.Printf("Failed to reconnect to RabbitMQ, retrying: %v", err)
+		if !b.sleepBackoff() {
+			return nil, false
 		}
 	}
+}
+
+// resubscribeAll re-declares each currently active subscription's queue and
+// binding, and starts a fresh consumeQueue goroutine for it on the given
+// (freshly reconnected) channel. The old consumeQueue goroutines already
+// exited when their delivery channel closed along with the dead connection.
+func (b *RabbitMQEventBus) resubscribeAll(ch *amqp.Channel) {
+	type entry struct {
+		queueName string
+		c         *consumer
+	}
+
+	b.mu.RLock()
+	entries := make([]entry, 0, len(b.consumers))
+	for qn, c := range b.consumers {
+		entries = append(entries, entry{qn, c})
+	}
+	b.mu.RUnlock()
+
+	for _, e := range entries {
+		if _, err := ch.QueueDeclare(
+			e.queueName,
+			true,  // durable
+			false, // auto-delete
+			false, // exclusive
+			false, // no-wait
+			amqp.Table{
+				"x-dead-letter-exchange": dlqExchangeName,
+			},
+		); err != nil {
+			log.Printf("Failed to re-declare queue %s after reconnect: %v", e.queueName, err)
+			continue
+		}
+
+		if err := ch.QueueBind(e.queueName, e.c.routingKey, exchangeName, false, nil); err != nil {
+			log.Printf("Failed to re-bind queue %s after reconnect: %v", e.queueName, err)
+			continue
+		}
+
+		consumerCtx, cancel := context.WithCancel(b.ctx)
+
+		b.mu.Lock()
+		e.c.cancel = cancel
+		b.mu.Unlock()
+
+		b.wg.Add(1)
+		go b.consumeQueue(consumerCtx, e.c)
+
+		log.Printf("Resumed consuming: queue=%s routing_key=%s", e.queueName, e.c.routingKey)
+	}
+}
+
+func (b *RabbitMQEventBus) sleepBackoff() bool {
+	d := b.backoff.Next()
+	t := time.NewTimer(d)
+	defer t.Stop()
+
+	select {
+	case <-b.ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func errString(err *amqp.Error) string {
+	if err == nil {
+		return "connection closed (no error detail)"
+	}
+	return err.Error()
 }

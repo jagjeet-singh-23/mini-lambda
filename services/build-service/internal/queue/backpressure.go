@@ -25,15 +25,24 @@ const (
 	BackpressureFull
 )
 
-type BackpressureManager struct {
-	conn      *amqp.Connection
-	queueName string
+// ConnectionProvider supplies the currently live AMQP connection. Publisher
+// satisfies this via its existing GetConnection() method. Depending on this
+// instead of a raw *amqp.Connection means BackpressureManager always sees
+// whatever connection is live right now — including after a reconnect —
+// without needing to know anything about reconnect logic itself.
+type ConnectionProvider interface {
+	GetConnection() *amqp.Connection
 }
 
-func NewBackpressureManager(conn *amqp.Connection, queueName string) *BackpressureManager {
+type BackpressureManager struct {
+	connProvider ConnectionProvider
+	queueName    string
+}
+
+func NewBackpressureManager(connProvider ConnectionProvider, queueName string) *BackpressureManager {
 	return &BackpressureManager{
-		conn:      conn,
-		queueName: queueName,
+		connProvider: connProvider,
+		queueName:    queueName,
 	}
 }
 
@@ -53,7 +62,7 @@ var backpressureThresholds = []thresholdInfo{
 
 // GetQueueDepth returns the current depth of the queue
 func (b *BackpressureManager) GetQueueDepth(ctx context.Context) (int, error) {
-	ch, err := b.conn.Channel()
+	ch, err := b.connProvider.GetConnection().Channel()
 	if err != nil {
 		return 0, err
 	}
